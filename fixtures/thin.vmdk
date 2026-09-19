@@ -1,0 +1,11 @@
+# Disk DescriptorFile
+version=1
+encoding="UTF-8"
+CID=1234abcd
+parentCID=ffffffff
+createType="vmfs"
+# Extent description
+RW 2097152 VMFS "system-flat.vmdk"
+# The Disk Data Base
+ddb.adapterType = "lsilogic"
+ddb.thinProvisioned = "1"

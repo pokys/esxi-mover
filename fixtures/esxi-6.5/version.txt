@@ -1,0 +1,2 @@
+VMware ESXi 6.5.0 build-7967591
+VMware ESXi 6.5.0 Update 1

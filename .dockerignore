@@ -1,0 +1,13 @@
+.git
+bin
+dist
+coverage.out
+*.exe
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.ppk
+.codex/
