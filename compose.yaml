@@ -1,0 +1,17 @@
+services:
+  mover:
+    build: .
+    image: "${MOVER_IMAGE:-esxi-mover:local}"
+    ports:
+      - "${MOVER_BIND_ADDRESS:-0.0.0.0}:8443:8443"
+    environment:
+      MOVER_APPLIANCE_UUID: "${MOVER_APPLIANCE_UUID:-}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
+    restart: "no"
+    logging:
+      driver: none

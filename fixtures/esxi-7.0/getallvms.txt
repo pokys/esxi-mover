@@ -1,0 +1,3 @@
+Vmid   Name              File                                      Guest OS        Version   Annotation
+7      Lab Server        [datastore1] Lab Server/Lab Server.vmx    otherGuest64    vmx-13
+12     VM's Test $box    [Store B] VM's Test $box/VM $box.vmx       ubuntu64Guest   vmx-13    synthetic fixture

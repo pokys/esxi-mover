@@ -1,0 +1,5 @@
+Get Snapshot:
+|-ROOT
+--Snapshot Name        : before-test
+--Snapshot Id          : 4
+--Snapshot State       : powered off
