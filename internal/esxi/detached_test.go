@@ -90,3 +90,29 @@ func TestDetachedWorkerSurvivesInitiatingShell(t *testing.T) {
 		})
 	}
 }
+
+// The folder is named after the source VM now, so the old "esxi-mover-" marker
+// is gone; what still has to hold is where the directory sits.
+func TestTargetPathAcceptsAnyDirectChildOfAVolume(t *testing.T) {
+	for _, ok := range []string{
+		"/vmfs/volumes/623af301-bbe12cec/VeeamB&R",
+		"/vmfs/volumes/target/esxi-mover-test",
+		"/vmfs/volumes/t/a b c",
+	} {
+		if !TargetPath(ok) {
+			t.Fatalf("a valid target directory was rejected: %q", ok)
+		}
+	}
+	for _, bad := range []string{
+		"/vmfs/volumes/623af301",           // the volume root itself
+		"/vmfs/volumes/623af301/a/b",       // nested below the volume
+		"/vmfs/volumes/623af301/.hidden",   // hidden directory
+		"/tmp/somewhere",                   // outside the datastores
+		"/vmfs/volumes/623af301/../escape", // traversal
+		"/vmfs/volumes//empty",
+	} {
+		if TargetPath(bad) {
+			t.Fatalf("an unsafe target directory was accepted: %q", bad)
+		}
+	}
+}

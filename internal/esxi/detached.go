@@ -56,8 +56,17 @@ func (c *Client) Finish(ctx context.Context, id string) error {
 	_, e = c.run(ctx, "archive-completed-operation", Argv("mv", activeDir, RuntimeDir+"/completed-"+id), nil)
 	return e
 }
+// TargetPath accepts a directory this tool may create and write into: a direct
+// child of a datastore volume, never the volume root and never a nested path.
+// The folder is named after the source VM, so its name carries no marker; that
+// the job owns the directory is guaranteed by CreateTarget's mkdir, which fails
+// when it already exists.
 func TargetPath(p string) bool {
-	return strings.HasPrefix(p, "/vmfs/volumes/") && strings.HasPrefix(path.Base(p), "esxi-mover-") && ValidPath(p) == nil
+	if ValidPath(p) != nil || !strings.HasPrefix(p, "/vmfs/volumes/") {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(p, "/vmfs/volumes/"), "/")
+	return len(parts) == 2 && parts[0] != "" && parts[1] != "" && !strings.HasPrefix(parts[1], ".")
 }
 func (c *Client) CreateTarget(ctx context.Context, dir string) error {
 	if !TargetPath(dir) {
