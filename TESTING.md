@@ -26,7 +26,7 @@ published it to GHCR in [this successful run](https://github.com/pokys/esxi-move
 | GitHub build/publish workflow | `actionlint` passed; hosted results are available in [GitHub Actions](https://github.com/pokys/esxi-mover/actions) |
 | Prebuilt image deployment | Mocked Docker verified the registry pull, the fallback to an image already on the host and failure when neither is available |
 | Compose deployment | `compose.yaml` validated in an empty directory, including image and UUID overrides; CI runs the built image through this file |
-| Launcher/OpenRC regression checks | `python3 scripts/test-start.py`: default image pull, selected image, offline fallback to a loaded image, guarded recovery from the exact networking parser failure, IPv4/IPv6 routes, missing/down network, required service failure, daemon timeout and GHCR login/error handling; PTY login cases run on Linux CI |
+| Launcher/OpenRC checks | `python3 scripts/test-start.py`: running daemon, selected image, OpenRC start with readiness wait, fallback to `--nodeps` when the service is blocked, daemon timeout; no networking restart in any case |
 | Real ESXi 6.5/6.7/7.x/8.x operations | **Not run: no ESXi host available** |
 
 Fixtures are explicitly synthetic. Fuzz seed tests run in the normal suite; this
