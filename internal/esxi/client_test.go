@@ -214,3 +214,44 @@ func TestNonzeroAndUnknownVerification(t *testing.T) {
 func ExampleQuote() {
 	fmt.Println(Quote("VM's Server")) // Output: 'VM'"'"'s Server'
 }
+
+// ESXi's shell answers 127 for every "command -v" probe because it has no such
+// builtin, which reported the first required name as missing on a host that had
+// all of them.
+func TestCapabilityProbeDoesNotRelyOnTheCommandBuiltin(t *testing.T) {
+	version, e := os.ReadFile("../../fixtures/esxi-6.5/version.txt")
+	if e != nil {
+		t.Fatal(e)
+	}
+	fake := &FakeExecutor{}
+	fake.RunFunc = func(_ context.Context, c Command) (Result, error) {
+		if strings.HasPrefix(c.Script, "command ") {
+			return Result{Stderr: "sh: command: not found", ExitCode: 127}, nil
+		}
+		if c.Category == "version" {
+			return Result{Stdout: string(version)}, nil
+		}
+		return Result{Stdout: "/bin/tool
+"}, nil
+	}
+	// Later inventory parsing fails on this stub output; only the probe matters.
+	if _, e = NewClient(fake).Inventory(context.Background()); e != nil &&
+		strings.Contains(e.Error(), "required ESXi command unavailable") {
+		t.Fatal("capability probe depends on a builtin ESXi does not provide:", e)
+	}
+	probed := map[string]bool{}
+	for _, c := range fake.Commands {
+		if c.Category != "capability" {
+			continue
+		}
+		if !strings.HasPrefix(c.Script, "which ") {
+			t.Fatalf("capability probe is not portable to ESXi: %q", c.Script)
+		}
+		probed[strings.Trim(strings.TrimPrefix(c.Script, "which "), "'")] = true
+	}
+	for _, name := range []string{"vim-cmd", "vmkfstools", "esxcli", "test", "kill"} {
+		if !probed[name] {
+			t.Fatalf("required command %q was never probed", name)
+		}
+	}
+}

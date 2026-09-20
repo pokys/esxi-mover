@@ -165,8 +165,10 @@ func (c *Client) Inventory(ctx context.Context) (Inventory, error) {
 	i.Capabilities.Version = strings.TrimSpace(v)
 	i.Capabilities.Supported = versionPattern.MatchString(v)
 	for _, name := range []string{"vim-cmd", "vmkfstools", "esxcli", "readlink", "find", "stat", "du", "nohup", "sh", "head", "tail", "mkdir", "mv", "cat", "test", "kill"} {
-		if _, e := c.run(ctx, "capability", "command -v "+Quote(name), nil); e != nil {
-			return i, fmt.Errorf("required ESXi command unavailable: %s", name)
+		// ESXi's shell provides no "command" builtin, so probing with it reports
+		// every name as missing. "which" is a busybox applet the host does have.
+		if _, e := c.run(ctx, "capability", "which "+Quote(name), nil); e != nil {
+			return i, fmt.Errorf("required ESXi command unavailable: %s (%s)", name, e)
 		}
 		i.Capabilities.Commands = append(i.Capabilities.Commands, name)
 	}
