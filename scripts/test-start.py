@@ -22,6 +22,7 @@ case "$*" in
     n=$((n + 1)); printf '%s' "$n" > "$MOVER_TEST_BIN/polls"
     [ "$n" -gt "${MOVER_TEST_READY_DELAY:-0}" ]; exit $?
     ;;
+  'image inspect '*) [ "${MOVER_TEST_IMAGE_PRESENT:-0}" = 1 ]; exit $? ;;
   'login ghcr.io')
     [ "${MOVER_TEST_LOGIN_FAIL:-0}" = 0 ] || exit 1
     touch "$MOVER_TEST_BIN/authenticated"; exit 0 ;;
@@ -121,30 +122,24 @@ class LauncherTests(unittest.TestCase):
             self.assertFalse(any("networking start" in call or " restart" in call for call in calls), calls)
             return result, calls
 
-    def test_default_pulls_prebuilt_image_without_building(self):
+    def test_default_pulls_the_published_image(self):
         _, calls = self.run_start()
-        self.assertIn("docker compose -f compose.image.yaml pull mover", calls)
+        self.assertIn("docker compose pull mover", calls)
         self.assertIn("image=ghcr.io/pokys/esxi-mover:latest uuid=fixture-appliance", calls)
         self.assertFalse(any(" build" in call or "rc-service" in call for call in calls))
 
-    def test_source_build_is_explicit(self):
-        _, calls = self.run_start(MOVER_BUILD="1")
-        self.assertIn("docker compose -f compose.yaml build", calls)
-        self.assertIn("image=esxi-mover:local uuid=fixture-appliance", calls)
-        self.assertFalse(any(" pull " in call for call in calls))
+    def test_selected_image_reaches_the_container(self):
+        _, calls = self.run_start(MOVER_IMAGE="ghcr.io/example/mover:checked")
+        self.assertIn("image=ghcr.io/example/mover:checked uuid=fixture-appliance", calls)
 
-    def test_offline_archive_and_custom_image(self):
-        for image in ("", "ghcr.io/example/mover:checked"):
+    def test_loaded_image_starts_without_a_reachable_registry(self):
+        for image in ("", "esxi-mover:local"):
             with self.subTest(image=image):
-                _, calls = self.run_start(MOVER_SKIP_BUILD="1", MOVER_IMAGE=image)
-                self.assertIn("docker image inspect " + (image or "esxi-mover:local"), calls)
-                self.assertFalse(any(" pull " in call or " build" in call for call in calls))
-
-    def test_invalid_or_conflicting_modes_stop_before_service_start(self):
-        for variables in ({"MOVER_BUILD": "1", "MOVER_SKIP_BUILD": "1"}, {"MOVER_BUILD": "yes"}):
-            with self.subTest(variables=variables):
-                _, calls = self.run_start(success=False, **variables)
-                self.assertFalse(any("rc-service" in call for call in calls))
+                _, calls = self.run_start(MOVER_TEST_PULL_ERROR="network",
+                                          MOVER_TEST_IMAGE_PRESENT="1", MOVER_IMAGE=image)
+                expected = image or "ghcr.io/pokys/esxi-mover:latest"
+                self.assertIn("docker image inspect " + expected, calls)
+                self.assertIn("image=%s uuid=fixture-appliance" % expected, calls)
 
     def test_compose_missing_stops_before_docker_start(self):
         _, calls = self.run_start(success=False, MOVER_TEST_COMPOSE_EXIT="1")
@@ -206,7 +201,7 @@ class LauncherTests(unittest.TestCase):
     def test_interactive_ghcr_login_retries_once(self):
         _, calls = self.run_start(tty=True, MOVER_TEST_PULL_ERROR="auth")
         self.assertEqual(calls.count("docker login ghcr.io"), 1)
-        self.assertEqual(calls.count("docker compose -f compose.image.yaml pull mover"), 2)
+        self.assertEqual(calls.count("docker compose pull mover"), 2)
 
     def test_failed_interactive_login_or_retry_never_starts_application(self):
         for error, login_fail in (("auth", "1"), ("auth-always", "0")):
