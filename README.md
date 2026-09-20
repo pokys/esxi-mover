@@ -361,8 +361,9 @@ The only direct Go dependency is `golang.org/x/crypto/ssh`. Frontend assets have
 external CDN or npm dependency. All state-changing requests require a RAM session,
 same-origin JSON and CSRF token; cookies are Secure, HttpOnly and SameSite Strict.
 Logs are bounded to 500 in-memory audit events and 8 KiB of latest clone output.
-The audit log records each command sent over SSH with its exit code and duration,
-and the WebGUI shows it live from the moment you connect. Credentials are not
+The audit log records each command sent over SSH with its exit code and duration.
+The WebGUI offers it from the moment you connect, collapsed, and refreshes it every
+two seconds while it is open. Credentials are not
 returned in HTML/JSON, in those commands, or in error messages.
 Disk/config bytes read through SSH are kept exact and never included in audit logs.
 
