@@ -37,7 +37,6 @@ jobs:
           sh -n start.sh
           python3 scripts/test-start.py
           docker compose config --quiet
-          docker compose -f compose.image.yaml config --quiet
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build the Linux image
@@ -50,11 +49,11 @@ jobs:
           tags: esxi-mover:ci
           cache-from: type=gha,scope=esxi-mover-amd64
           cache-to: type=gha,mode=max,scope=esxi-mover-amd64
-      - name: Check the image with standalone Compose
+      - name: Check the image with Compose
         env:
           MOVER_IMAGE: esxi-mover:ci
         run: >-
-          docker compose -f compose.image.yaml run
+          docker compose run
           --rm --no-deps --pull never mover -h
 
   publish:

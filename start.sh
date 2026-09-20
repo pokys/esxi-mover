@@ -45,19 +45,8 @@ mover_recover_openrc() {
 
 command -v docker >/dev/null 2>&1 || mover_fail 'Install Docker first: apk add docker docker-cli-compose'
 docker compose version >/dev/null 2>&1 || mover_fail 'Install the Docker Compose plugin: apk add docker-cli-compose'
-case "${MOVER_BUILD:-0}:${MOVER_SKIP_BUILD:-0}" in
-  0:0)
-    MOVER_IMAGE=${MOVER_IMAGE:-ghcr.io/pokys/esxi-mover:latest}
-    mover_compose_file=compose.image.yaml
-    ;;
-  1:0|0:1)
-    MOVER_IMAGE=${MOVER_IMAGE:-esxi-mover:local}
-    mover_compose_file=compose.yaml
-    ;;
-  *) mover_fail 'Use MOVER_BUILD=1 for a source build or MOVER_SKIP_BUILD=1 for an offline image; do not combine them.' ;;
-esac
+MOVER_IMAGE=${MOVER_IMAGE:-ghcr.io/pokys/esxi-mover:latest}
 export MOVER_IMAGE
-mover_compose() { docker compose -f "$mover_compose_file" "$@"; }
 
 if ! docker info >/dev/null 2>&1; then
   if command -v rc-service >/dev/null 2>&1; then
@@ -84,34 +73,31 @@ if [ -z "${MOVER_APPLIANCE_UUID:-}" ] && [ -r /sys/class/dmi/id/product_uuid ]; 
   MOVER_APPLIANCE_UUID=$(cat /sys/class/dmi/id/product_uuid)
   export MOVER_APPLIANCE_UUID
 fi
-if [ "${MOVER_SKIP_BUILD:-0}" = 1 ]; then
-  docker image inspect "$MOVER_IMAGE" >/dev/null || mover_fail 'The selected offline image is not loaded. Load its archive with docker load first.'
-elif [ "${MOVER_BUILD:-0}" = 1 ]; then
-  printf '%s\n' 'Building ESXi Mover. Docker may need more RAM than the running app.'
-  mover_compose build
+printf '%s\n' "Pulling image: $MOVER_IMAGE"
+if mover_pull_output=$(docker compose pull mover 2>&1); then
+  printf '%s\n' "$mover_pull_output"
+elif docker image inspect "$MOVER_IMAGE" >/dev/null 2>&1; then
+  # An image loaded from an archive or built locally needs no registry.
+  printf '%s\n' "$mover_pull_output" >&2
+  printf '%s\n' "Could not pull; starting the copy of $MOVER_IMAGE already on this host."
 else
-  printf '%s\n' "Pulling prebuilt image: $MOVER_IMAGE"
-  if mover_pull_output=$(mover_compose pull mover 2>&1); then
-    printf '%s\n' "$mover_pull_output"
-  else
-    printf '%s\n' "$mover_pull_output" >&2
-    mover_auth_error=0
-    case "$(printf '%s' "$mover_pull_output" | tr '[:upper:]' '[:lower:]')" in
-      *unauthorized*|*'authentication required'*|*'error from registry: denied'*|*'denied: requested access'*) mover_auth_error=1 ;;
-    esac
-    case "$MOVER_IMAGE:$mover_auth_error" in
-      ghcr.io/*:1)
-        if [ -t 0 ]; then
-          printf '%s\n' 'GHCR requires authentication. Enter your GitHub username and a classic token with read:packages at the Docker login prompts.'
-          docker login ghcr.io || mover_fail 'GHCR login failed.'
-          mover_compose pull mover || mover_fail 'Image pull still failed after login; check package access and token permissions.'
-        else
-          mover_fail 'GHCR requires authentication. Run docker login ghcr.io with a classic token with read:packages, then retry.'
-        fi
-        ;;
-      *) mover_fail 'Image download failed. Check the registry error above; the application has not started.' ;;
-    esac
-  fi
+  printf '%s\n' "$mover_pull_output" >&2
+  mover_auth_error=0
+  case "$(printf '%s' "$mover_pull_output" | tr '[:upper:]' '[:lower:]')" in
+    *unauthorized*|*'authentication required'*|*'error from registry: denied'*|*'denied: requested access'*) mover_auth_error=1 ;;
+  esac
+  case "$MOVER_IMAGE:$mover_auth_error" in
+    ghcr.io/*:1)
+      if [ -t 0 ]; then
+        printf '%s\n' 'GHCR requires authentication. Enter your GitHub username and a classic token with read:packages at the Docker login prompts.'
+        docker login ghcr.io || mover_fail 'GHCR login failed.'
+        docker compose pull mover || mover_fail 'Image pull still failed after login; check package access and token permissions.'
+      else
+        mover_fail 'GHCR requires authentication. Run docker login ghcr.io with a classic token with read:packages, then retry.'
+      fi
+      ;;
+    *) mover_fail 'Image download failed and no local copy exists. Check the registry error above; the application has not started.' ;;
+  esac
 fi
-printf '%s\n' 'Open https://<appliance-ip>:8443 and use the token printed below.' 'Keep this console attached. Do not stop/restart the appliance during migration.' 'The HTTPS certificate and admin token are ephemeral. Container logging to disk is disabled.'
-exec docker compose -f "$mover_compose_file" up --no-build --pull never --abort-on-container-exit
+printf '%s\n' 'Open https://<appliance-ip>:8443 and use the admin token printed below.' 'The token and the HTTPS certificate are generated fresh on every start.' 'Do not stop or restart the appliance during a migration.'
+exec docker compose up --pull never --abort-on-container-exit

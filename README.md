@@ -20,10 +20,12 @@ sh ./start.sh
 ```
 
 The launcher starts Docker on Alpine/OpenRC when needed, waits for the daemon,
-reads the appliance UUID and downloads `ghcr.io/pokys/esxi-mover:latest`. It does
-not build from source unless you select `MOVER_BUILD=1`. If a private GHCR image
-requires authentication, an interactive terminal is prompted through `docker login`;
-noninteractive runs stop with an authentication hint instead of hanging.
+reads the appliance UUID and downloads `ghcr.io/pokys/esxi-mover:latest`. Set
+`MOVER_IMAGE` to select another tag, digest or a locally loaded image; an image
+that cannot be pulled but is already present on the host is started anyway. If a
+private GHCR image requires authentication, an interactive terminal is prompted
+through `docker login`; noninteractive runs stop with an authentication hint
+instead of hanging.
 
 Open **https://APPLIANCE_IP:8443**. Compare the certificate SHA256 fingerprint
 with the console, then enter the startup admin token. The self-signed certificate
@@ -31,38 +33,37 @@ and key are generated in RAM. Verify the SSH fingerprint separately through a
 trusted channel before submitting ESXi credentials. The initial SSH probe aborts
 before authentication; every authenticated connection pins the confirmed key.
 
-Keep the console attached: Docker persistent logging is disabled. The token is
-valid for this application run. It is not saved by the app or exposed in responses.
-Use a trusted management network; do not expose the root-credential UI publicly.
+The token and the fingerprint are printed once at startup and are valid for this
+application run only; the app never stores them or returns them in a response.
+They stay readable afterwards through `docker compose logs mover`, which also
+means Docker keeps them in the container's log on the host. Run
+`docker compose down` when the migration is finished. Use a trusted management
+network; do not expose the root-credential UI publicly.
 
-## Run with a standalone Compose file
+## Run without a checkout, or from a Compose UI
 
-Use [compose.image.yaml](compose.image.yaml) to run the published GHCR image.
-This single file can be copied to an empty directory: no Git checkout, Dockerfile
-or source build is needed. Docker must already be running and the Compose plugin
-must be installed. Authenticate with `docker login ghcr.io -u pokys` first if the
-package is private; use a GitHub token (classic) with `read:packages` as the password.
-
-On the Linux appliance, run these commands in the directory containing the file:
+[compose.yaml](compose.yaml) is a short file that runs the published GHCR image.
+Copy just that file to an empty directory, or paste it into a Compose UI such as
+Dockge or Portainer: no Git checkout, Dockerfile or source build is needed. Docker
+must already be running and the Compose plugin must be installed. Authenticate with
+`docker login ghcr.io -u pokys` first if the package is private; use a GitHub token
+(classic) with `read:packages` as the password.
 
 ```sh
 export MOVER_APPLIANCE_UUID="$(cat /sys/class/dmi/id/product_uuid)"
-docker compose -f compose.image.yaml up --abort-on-container-exit
+docker compose up
 ```
 
-Passing the appliance BIOS UUID enables self-migration detection. The image is
-pulled from `ghcr.io/pokys/esxi-mover:latest`; use `MOVER_IMAGE` to select another
-published tag or digest. Open `https://APPLIANCE_IP:8443` and use the token printed
-in this console. Keep it attached during migrations: logging to disk is disabled
-and application state is held in RAM.
+Passing the appliance BIOS UUID enables self-migration detection; without it the
+tool cannot recognize its own appliance. The image is pulled from
+`ghcr.io/pokys/esxi-mover:latest`; use `MOVER_IMAGE` to select another published
+tag or digest, or a locally loaded image. For a previously downloaded image
+without registry access, add `--pull never`.
 
-The file preserves the read-only filesystem, dropped capabilities, 256 MiB memory
-limit and default-off restart policy. `MOVER_BIND_ADDRESS` can restrict the published
-port to the appliance's management address. For a previously downloaded image
-without registry access, use `up --pull never --abort-on-container-exit`.
-
-The original `compose.yaml` remains available for local source builds with
-`MOVER_BUILD=1 sh ./start.sh` and for loaded offline images.
+Read the admin token and the certificate fingerprint from the container's log
+(`docker compose logs mover`, or the log pane of the Compose UI), then open
+`https://APPLIANCE_IP:8443`. To publish the port only on the appliance's management
+address, change the `ports` entry to `192.0.2.20:8443:8443`.
 
 ## Alpine Live quick start
 
@@ -81,8 +82,8 @@ sh ./start.sh
 
 The script starts Docker via OpenRC when needed, pulls the selected image, reads the
 appliance BIOS UUID from DMI when available, then runs the WebGUI in the foreground.
-The container runs as a non-root user with a read-only filesystem, no added
-capabilities, no volumes and a 256 MiB memory limit. State, credentials and audit
+The container runs as a non-root user from a `scratch` image that holds one static
+binary: no shell, no package manager, no volumes. State, credentials and audit
 events remain in RAM. A reboot loses the application's state by design.
 
 ### Alpine Live: Docker blocked by the networking service
@@ -170,10 +171,10 @@ MOVER_IMAGE=ghcr.io/pokys/esxi-mover:v1.0.0 sh ./start.sh
 ```
 
 This pulls the selected image and starts it without compiling Go on the appliance.
-For an already-loaded/cached image without a registry connection, add
-`MOVER_SKIP_BUILD=1` (this defaults to `esxi-mover:local` for the portable archive).
-Use `MOVER_BUILD=1 sh ./start.sh` for an explicit local source build. These two
-modes cannot be combined. An explicit `MOVER_IMAGE` is respected in every mode.
+An image already loaded on the host starts even when the registry is unreachable,
+so there is no offline flag. To build from source instead, run
+`docker build -t esxi-mover:local .` and start with
+`MOVER_IMAGE=esxi-mover:local sh ./start.sh`.
 
 The workflow follows GitHub's [container publishing documentation](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images).
 
@@ -185,11 +186,11 @@ more memory. For a small diskless VM, build the image elsewhere and load it:
 
 ```sh
 docker load -i esxi-mover-image.tar
-MOVER_SKIP_BUILD=1 sh ./start.sh
+MOVER_IMAGE=esxi-mover:local sh ./start.sh
 ```
 
-The source build also works on a host with more RAM. Optionally restrict exposure:
-`MOVER_BIND_ADDRESS=192.0.2.20 sh ./start.sh` (use the appliance's management IP).
+The source build also works on a host with more RAM. To restrict exposure, change
+the `ports` entry in `compose.yaml` to the appliance's management IP.
 
 If using the delivered source archive and image instead of a Git remote, transfer
 `esxi-mover-source.tar.gz` and `esxi-mover-image.tar` to the Alpine VM, then run from
@@ -202,7 +203,7 @@ tar -xzf esxi-mover-source.tar.gz
 rc-service docker start
 docker load -i esxi-mover-image.tar
 cd esxi-mover
-MOVER_SKIP_BUILD=1 sh ./start.sh
+MOVER_IMAGE=esxi-mover:local sh ./start.sh
 ```
 
 ## COPY and MOVE
@@ -373,8 +374,8 @@ docker load -i dist/esxi-mover-image.tar
 
 The archive contains a non-root scratch image with the same entrypoint and exposed
 port as Dockerfile. Its `.sha256` file verifies archive transport. Building an archive
-does not establish that it was run in Docker. `MOVER_BUILD=1 sh ./start.sh` uses a
-normal multi-stage Docker build, which also runs the test suite in the builder image.
+does not establish that it was run in Docker. `docker build -t esxi-mover:local .`
+runs the normal multi-stage build, which also runs the test suite in the builder image.
 
 ```text
 cmd/esxi-mover/     HTTPS application entrypoint
@@ -386,7 +387,7 @@ internal/web/      sessions, CSRF, endpoints, ephemeral TLS, embedded UI
 fixtures/          synthetic ESXi 6.5/6.7/7.0/8.0 and disk/config samples
 scripts/           portable container image packaging and launcher regression checks
 .github/workflows/ test, race, vet, Docker build and GHCR publication
-Dockerfile · compose.yaml · compose.image.yaml · start.sh · TESTING.md · LICENSE
+Dockerfile · compose.yaml · start.sh · TESTING.md · LICENSE
 ```
 
 Implementation references: Broadcom's [vmkfstools cloning guidance](https://knowledge.broadcom.com/external/article/343140/cloning-and-converting-virtual-machine-d.html),
