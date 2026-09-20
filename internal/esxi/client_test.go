@@ -231,8 +231,7 @@ func TestCapabilityProbeDoesNotRelyOnTheCommandBuiltin(t *testing.T) {
 		if c.Category == "version" {
 			return Result{Stdout: string(version)}, nil
 		}
-		return Result{Stdout: "/bin/tool
-"}, nil
+		return Result{Stdout: "/bin/tool\n"}, nil
 	}
 	// Later inventory parsing fails on this stub output; only the probe matters.
 	if _, e = NewClient(fake).Inventory(context.Background()); e != nil &&
