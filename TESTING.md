@@ -28,7 +28,7 @@ published it to GHCR in [this successful run](https://github.com/pokys/esxi-move
 | Prebuilt image deployment | Mocked Docker verified the registry pull, the fallback to an image already on the host and failure when neither is available |
 | Compose deployment | `compose.yaml` validated in an empty directory, including image and UUID overrides; CI runs the built image through this file |
 | Launcher/OpenRC checks | `python3 scripts/test-start.py`: running daemon, selected image, OpenRC start with readiness wait, fallback to `--nodeps` when the service is blocked, daemon timeout; no networking restart in any case |
-| Read-only paths against a real ESXi 6.5.0 build-5969303 host | Verified: version match, all sixteen required commands resolved, inventory with multi-line annotations, datastore table including unnamed vfat volumes, power state (LF only, confirmed with `od -c`), empty and populated snapshot trees, `No message.`, one `vmPathName` per VM |
+| Read-only paths against a real ESXi 6.5 host | Verified: version match, all sixteen required commands resolved, inventory with multi-line annotations, datastore table including unnamed vfat volumes, power state (LF only, confirmed with `od -c`), empty and populated snapshot trees, `No message.`, one `vmPathName` per VM |
 | Real ESXi migration operations (shutdown, clone, register, rollback) | **Not run: never executed against a real host** |
 
 Fixtures are explicitly synthetic. Fuzz seed tests run in the normal suite; this

@@ -289,7 +289,7 @@ func TestParseVMsStillRejectsUnknownRows(t *testing.T) {
 	}
 }
 
-// Shapes taken from a real ESXi 6.5.0 build-5969303 host. The synthetic
+// Shapes taken from a real ESXi 6.5 host. The synthetic
 // fixtures were idealized, so several parsers met their first real input in
 // production; these lock the observed output in.
 func TestRealHostShapes(t *testing.T) {
@@ -299,9 +299,9 @@ func TestRealHostShapes(t *testing.T) {
 		t.Fatal("real power output rejected", e, p)
 	}
 	// An ampersand and spaces are ordinary in VM names.
-	raw := "        vmPathName = \"[DataStore1] VeeamB&R/VeeamB&R.vmx\",\n"
+	raw := "        vmPathName = \"[Store One] Backup & Restore/Backup & Restore.vmx\",\n"
 	got, e := ParseVMPath(raw)
-	if e != nil || got != "[DataStore1] VeeamB&R/VeeamB&R.vmx" {
+	if e != nil || got != "[Store One] Backup & Restore/Backup & Restore.vmx" {
 		t.Fatal("real authoritative VMX path rejected", e, got)
 	}
 }
