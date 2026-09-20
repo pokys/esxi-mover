@@ -798,3 +798,20 @@ func TestExistingTargetFolderBlocksAndSuggestsAFreeName(t *testing.T) {
 		t.Fatalf("no free name was offered: %q", detail)
 	}
 }
+
+// The analyzer once produced a target directory the engine refused, and the
+// refusal surfaced only after the source VM had been powered off. Preflight
+// must settle it.
+func TestAnalyzerTargetDirectoryIsOneTheEngineAccepts(t *testing.T) {
+	h := newFake(1)
+	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !esxi.TargetPath(r.TargetDir) {
+		t.Fatalf("the engine would refuse the analyzed target directory: %s", r.TargetDir)
+	}
+	if reportStatus(r, "Target directory") == "BLOCK" {
+		t.Fatal("a usable target directory was blocked")
+	}
+}

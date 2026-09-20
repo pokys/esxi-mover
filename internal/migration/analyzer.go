@@ -106,6 +106,9 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 	r.TargetDir = path.Join(targetMount, folder)
 	r.TargetVMX = path.Join(r.TargetDir, path.Base(r.SourceVMX))
 	r.TargetFree = target.Free
+	if !esxi.TargetPath(r.TargetDir) {
+		r.check("Target directory", "BLOCK", "The target folder must be a direct child of the target datastore")
+	}
 	exists, e := a.Host.Exists(ctx, r.TargetDir)
 	if e != nil {
 		return r, e
