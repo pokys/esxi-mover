@@ -305,3 +305,28 @@ func TestRealHostShapes(t *testing.T) {
 		t.Fatal("real authoritative VMX path rejected", e, got)
 	}
 }
+
+type redactingExecutor struct{ secret string }
+
+func (r *redactingExecutor) Run(context.Context, Command) (Result, error) { return Result{}, nil }
+func (r *redactingExecutor) Redact(s string) string {
+	return strings.ReplaceAll(s, r.secret, "[REDACTED]")
+}
+
+// A failure is only diagnosable when the log says what was actually run. The
+// capability probe reported a category and an exit code but not the command
+// that produced them, which is what made it opaque on a real host.
+func TestAuditRecordsTheCommandAndRedactsIt(t *testing.T) {
+	c := NewClient(&redactingExecutor{secret: "hunter2"})
+	_, _ = c.Exists(context.Background(), "/vmfs/volumes/store/hunter2/vm.vmx")
+	events := c.Audit.Events()
+	if len(events) != 1 {
+		t.Fatalf("expected one audit event, got %d", len(events))
+	}
+	if !strings.Contains(events[0].Command, "test") {
+		t.Fatalf("the command was not recorded: %q", events[0].Command)
+	}
+	if strings.Contains(events[0].Command, "hunter2") {
+		t.Fatalf("a secret reached the audit log: %q", events[0].Command)
+	}
+}
