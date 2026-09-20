@@ -20,12 +20,10 @@ sh ./start.sh
 ```
 
 The launcher starts Docker on Alpine/OpenRC when needed, waits for the daemon,
-reads the appliance UUID and downloads `ghcr.io/pokys/esxi-mover:latest`. Set
-`MOVER_IMAGE` to select another tag, digest or a locally loaded image; an image
-that cannot be pulled but is already present on the host is started anyway. If a
-private GHCR image requires authentication, an interactive terminal is prompted
-through `docker login`; noninteractive runs stop with an authentication hint
-instead of hanging.
+reads the appliance UUID and hands over to `docker compose up`. Set `MOVER_IMAGE`
+to select another tag, digest or a locally loaded image; Compose pulls
+`ghcr.io/pokys/esxi-mover:latest` when no copy is present on the host. Run
+`docker login ghcr.io` yourself first if the package is private.
 
 Open **https://APPLIANCE_IP:8443**. Compare the certificate SHA256 fingerprint
 with the console, then enter the startup admin token. The self-signed certificate
@@ -69,8 +67,8 @@ address, change the `ports` entry to `192.0.2.20:8443:8443`.
 
 Boot Alpine Live (for example via netboot.xyz), obtain DHCP and run as root.
 The repository is [pokys/esxi-mover](https://github.com/pokys/esxi-mover).
-Authenticate to GitHub first if the repository is private. The launcher can prompt
-for GHCR authentication if the selected image is private.
+Authenticate to GitHub first if the repository is private, and to GHCR with
+`docker login ghcr.io` if the package is private.
 
 ```sh
 apk update
@@ -80,8 +78,8 @@ cd esxi-mover
 sh ./start.sh
 ```
 
-The script starts Docker via OpenRC when needed, pulls the selected image, reads the
-appliance BIOS UUID from DMI when available, then runs the WebGUI in the foreground.
+The script starts Docker via OpenRC when needed, reads the appliance BIOS UUID from
+DMI when available, then runs the WebGUI in the foreground.
 The container runs as a non-root user from a `scratch` image that holds one static
 binary: no shell, no package manager, no volumes. State, credentials and audit
 events remain in RAM. A reboot loses the application's state by design.
@@ -94,12 +92,10 @@ host network configuration error. This happens before ESXi Mover starts.
 Do not overwrite the interfaces file or restart a working network just to launch
 the application.
 
-`start.sh` recovers automatically from this exact pair of errors if it finds an
-existing default route and a global address on that route's active interface
-(IPv4 or IPv6). It starts `sysfs` and `cgroups`, then starts Docker with
-`--nodeps` and waits for daemon readiness. It never rewrites the interfaces file
-or restarts networking. Unknown service errors, an unconfigured/down network or
-failed filesystem dependencies stop deployment.
+`start.sh` handles this: when `rc-service docker start` fails it starts `sysfs`
+and `cgroups`, then starts Docker with `--nodeps` and waits for the daemon. It
+never rewrites the interfaces file and never restarts networking, so networking
+that is genuinely down stays down and the image download fails instead.
 
 Update an existing checkout and run:
 
@@ -170,9 +166,9 @@ sh ./start.sh
 MOVER_IMAGE=ghcr.io/pokys/esxi-mover:v1.0.0 sh ./start.sh
 ```
 
-This pulls the selected image and starts it without compiling Go on the appliance.
-An image already loaded on the host starts even when the registry is unreachable,
-so there is no offline flag. To build from source instead, run
+This starts the selected image without compiling Go on the appliance. Compose only
+pulls when the image is missing locally, so a loaded archive or a local build needs
+no registry and no offline flag. To build from source, run
 `docker build -t esxi-mover:local .` and start with
 `MOVER_IMAGE=esxi-mover:local sh ./start.sh`.
 
@@ -385,7 +381,7 @@ internal/vmdk/     descriptor parser and standalone-disk rules
 internal/migration/ preflight, snapshot checks, state machine, verification, rollback
 internal/web/      sessions, CSRF, endpoints, ephemeral TLS, embedded UI
 fixtures/          synthetic ESXi 6.5/6.7/7.0/8.0 and disk/config samples
-scripts/           portable container image packaging and launcher regression checks
+scripts/           portable container image packaging and launcher checks
 .github/workflows/ test, race, vet, Docker build and GHCR publication
 Dockerfile · compose.yaml · start.sh · TESTING.md · LICENSE
 ```
