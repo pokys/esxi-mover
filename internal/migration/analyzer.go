@@ -298,9 +298,13 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 	sort.Strings(fingerprints)
 	sum := sha256.Sum256([]byte(r.SourceVMX + "\n" + stable.String() + "\n" + strings.Join(fingerprints, "\n")))
 	r.Fingerprint = hex.EncodeToString(sum[:])
-	// Provisioned capacity is the safe upper bound; allocation is displayed but
-	// is not a reliable reservation in the presence of storage reclamation/VAAI.
-	remaining := r.Provisioned - consumed
+	// A thin disk is cloned thin, so the clone writes roughly what is allocated
+	// rather than what is provisioned. r.Allocated already falls back to the
+	// provisioned size for any disk whose allocation could not be read, so it
+	// is the honest requirement. Holding the full provisioned size is a
+	// separate concern: the disks can still grow after the move, so say so
+	// instead of refusing the migration outright.
+	remaining := r.Allocated - consumed
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -308,10 +312,21 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 	if e != nil {
 		return r, e
 	}
-	if r.TargetFree < r.Required {
-		r.check("Free space", "BLOCK", "Insufficient free space for provisioned capacity + 15% + 1 GiB")
-	} else {
-		r.check("Free space", "OK", "Reserved estimate uses provisioned capacity + 15% + 1 GiB")
+	grown := r.Provisioned - consumed
+	if grown < 0 {
+		grown = 0
+	}
+	full, e := reserve(grown)
+	if e != nil {
+		return r, e
+	}
+	switch {
+	case r.TargetFree < r.Required:
+		r.check("Free space", "BLOCK", "Insufficient free space for allocated capacity + 15% + 1 GiB")
+	case r.TargetFree < full:
+		r.check("Free space", "WARNING", "Enough for the thin clone, but the target cannot hold these disks once they grow to their full provisioned size")
+	default:
+		r.check("Free space", "OK", "Reserved estimate uses allocated capacity + 15% + 1 GiB")
 	}
 	if r.Ready {
 		r.check("Migration", "OK", "Ready for a fresh preflight and cold migration")
@@ -405,23 +420,66 @@ func (a Analyzer) sharedCheck(ctx context.Context, inv esxi.Inventory, id int, b
 			if e != nil {
 				return fmt.Errorf("unreadable other-VM descriptor; cannot exclude shared backing")
 			}
-			if d.ParentHint != "" || !strings.EqualFold(d.ParentCID, "ffffffff") {
-				return fmt.Errorf("another VM has a parent chain; dependency isolation cannot be proven in V1")
-			}
-			for _, ex := range d.Extents {
-				ep, e := esxi.ResolveReference(ex.File, path.Dir(ref), inv.Datastores)
-				if e != nil {
-					return e
-				}
-				ep, e = a.Host.Canonical(ctx, ep)
-				if e != nil {
-					return e
-				}
-				if backings[ep] {
-					return fmt.Errorf("another registered VM shares a source extent")
-				}
+			if e := a.otherChain(ctx, inv, ref, d, backings); e != nil {
+				return e
 			}
 		}
 	}
 	return nil
+}
+
+// otherChain walks one other VM's disk chain. A snapshot in another VM is only
+// a dependency risk when the chain can reach the source VM's files, so follow
+// it instead of refusing outright: block on any link that touches a source
+// backing, and block when a link leaves the other VM's own directory, where
+// isolation can no longer be proven.
+func (a Analyzer) otherChain(ctx context.Context, inv esxi.Inventory, ref string, d vmdk.Descriptor, backings map[string]bool) error {
+	dir := path.Dir(ref)
+	for depth := 0; depth <= 32; depth++ {
+		for _, ex := range d.Extents {
+			ep, e := esxi.ResolveReference(ex.File, dir, inv.Datastores)
+			if e != nil {
+				return e
+			}
+			ep, e = a.Host.Canonical(ctx, ep)
+			if e != nil {
+				return e
+			}
+			if backings[ep] {
+				return fmt.Errorf("another registered VM shares a source extent")
+			}
+			if path.Dir(ep) != dir {
+				return fmt.Errorf("another VM's extent leaves its own directory; isolation cannot be proven")
+			}
+		}
+		if strings.EqualFold(d.ParentCID, "ffffffff") && d.ParentHint == "" {
+			return nil
+		}
+		if d.ParentHint == "" {
+			return fmt.Errorf("another VM has a parent chain with no resolvable parent; isolation cannot be proven")
+		}
+		parent, e := esxi.ResolveReference(d.ParentHint, dir, inv.Datastores)
+		if e != nil {
+			return e
+		}
+		parent, e = a.Host.Canonical(ctx, parent)
+		if e != nil {
+			return e
+		}
+		if backings[parent] {
+			return fmt.Errorf("another VM's snapshot chain references a source disk")
+		}
+		if path.Dir(parent) != dir {
+			return fmt.Errorf("another VM's chain leaves its own directory; isolation cannot be proven")
+		}
+		text, e := a.Host.ReadFile(ctx, parent)
+		if e != nil {
+			return fmt.Errorf("cannot read a parent in another VM's chain")
+		}
+		d, e = vmdk.Parse(text)
+		if e != nil {
+			return fmt.Errorf("unreadable parent descriptor in another VM's chain")
+		}
+	}
+	return fmt.Errorf("another VM's disk chain is too deep to verify")
 }

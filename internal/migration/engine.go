@@ -92,7 +92,7 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 		if err = verifyDisk(ctx, e.Host, d); err != nil {
 			return fmt.Errorf("target disk verification failed: %w", err)
 		}
-		consumed += d.Provisioned
+		consumed += d.Allocated
 	}
 	if _, err = e.guard(ctx, r, true, consumed); err != nil {
 		return err
