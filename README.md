@@ -254,10 +254,13 @@ Disable conflicting backup/snapshot jobs, auto-starts and orchestration, and res
 the maintenance window and datastore capacity. The Mover lock coordinates other
 Mover instances; it cannot lock out an ESXi administrator.
 
-The capacity gate uses **total provisioned bytes + 15% + 1 GiB**, even when `du -k`
-reports a smaller allocation. The report also shows allocated bytes, or clearly marks
-them unknown. Remaining capacity is checked again between disk clones.
-No space reservation against unrelated datastore writers is provided.
+The capacity gate uses **allocated bytes + 15% + 1 GiB**, because a thin disk is
+cloned thin and writes roughly what it has allocated. A disk whose allocation cannot
+be read counts as fully provisioned. When the target could not hold the disks once
+they grow to their full provisioned size, the report warns instead of blocking: that
+is a later out-of-space risk for the guest, not a reason the clone cannot run.
+Remaining capacity is checked again between disk clones. No space reservation
+against unrelated datastore writers is provided.
 
 Target verification checks `vmkfstools -e`, descriptor readability, standalone chain,
 thin format, expected virtual capacity, local extent existence/logical size and
@@ -279,8 +282,10 @@ configuration are retained in the rewritten VMX.
 - A selected Mover appliance matching the configured BIOS/DMI UUID (including SMBIOS byte order).
 
 Other registered VMs are inspected for shared disk/extent dependencies. An unreadable
-other-VM configuration or a parent chain in another VM blocks the operation because
-V1 cannot prove dependency isolation. Unregistered VMs and other hosts are not visible
+other-VM configuration blocks the operation. A snapshot or linked-clone chain in
+another VM is followed rather than refused outright: it blocks when a link references
+a source disk or extent, or when the chain leaves that VM's own directory, where
+isolation can no longer be proven. Unregistered VMs and other hosts are not visible
 to that inventory scan; independent administrative ownership of the disks is required.
 
 External ISO media is not migrated. Relative ISO references are rewritten to their

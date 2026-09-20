@@ -651,3 +651,85 @@ func TestSnapshotManagerOnRealHostOutput(t *testing.T) {
 		t.Fatal("a populated snapshot tree was not blocked")
 	}
 }
+
+func reportStatus(r Report, name string) string {
+	status := "MISSING"
+	for _, c := range r.Checks {
+		if c.Name != name {
+			continue
+		}
+		if c.Status == "BLOCK" {
+			return "BLOCK"
+		}
+		status = c.Status
+	}
+	return status
+}
+
+// A thin disk is cloned thin, so sizing the gate on the provisioned capacity
+// refused migrations that comfortably fit. The target still has to be told it
+// cannot hold the disks once they grow.
+func TestFreeSpaceIsSizedOnAllocationAndWarnsAboutGrowth(t *testing.T) {
+	// One disk: 1 GiB provisioned, 512 MiB allocated, so the allocated
+	// requirement is about 1.58 GiB and the grown one about 2.15 GiB.
+	for _, tc := range []struct {
+		free int64
+		want string
+	}{
+		{1 << 30, "BLOCK"},
+		{2 << 30, "WARNING"},
+		{8 << 30, "OK"},
+	} {
+		h := newFake(1)
+		h.ds[1].Free = tc.free
+		r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false})
+		if e != nil {
+			t.Fatal(e)
+		}
+		if got := reportStatus(r, "Free space"); got != tc.want {
+			t.Fatalf("free %d GiB: wanted %s, got %s (required %d)", tc.free>>30, tc.want, got, r.Required)
+		}
+	}
+}
+
+// A snapshot in an unrelated VM used to block every migration on the host.
+// It is only a dependency risk when the chain can reach the source VM.
+func TestOtherVMChainBlocksOnlyWhenItReachesTheSource(t *testing.T) {
+	const otherDir = "/vmfs/volumes/source/other"
+	build := func(parentHint string) *fakeHost {
+		h := newFake(1)
+		h.vms = append(h.vms, esxi.VM{ID: 8, Name: "other", Datastore: "source", VMXPath: "[source] other/other.vmx"})
+		h.files[otherDir+"/other.vmx"] = `.encoding = "UTF-8"
+scsi0:0.present = "TRUE"
+scsi0:0.fileName = "other-000001.vmdk"
+`
+		h.files[otherDir+"/other-000001.vmdk"] = `version=1
+CID=aaaabbbb
+parentCID=1234abcd
+parentFileNameHint="` + parentHint + `"
+createType="vmfsSparse"
+RW 2097152 VMFSSPARSE "other-000001-delta.vmdk"
+`
+		h.files[otherDir+"/other.vmdk"] = `version=1
+CID=1234abcd
+parentCID=ffffffff
+createType="vmfs"
+RW 2097152 VMFS "other-flat.vmdk"
+`
+		return h
+	}
+	r, e := (Analyzer{Host: build("other.vmdk")}).Analyze(context.Background(), Request{7, "target", "COPY", false})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if got := reportStatus(r, "Shared disk inventory"); got != "OK" {
+		t.Fatalf("a chain contained in the other VM's own directory blocked: %s", got)
+	}
+	r, e = (Analyzer{Host: build("[source] lab/d0.vmdk")}).Analyze(context.Background(), Request{7, "target", "COPY", false})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if got := reportStatus(r, "Shared disk inventory"); got != "BLOCK" {
+		t.Fatalf("a chain reaching a source disk was allowed: %s", got)
+	}
+}
