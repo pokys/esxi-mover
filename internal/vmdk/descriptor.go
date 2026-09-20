@@ -74,7 +74,14 @@ func Parse(text string) (Descriptor, error) {
 	d.ParentHint = d.Fields["parentfilenamehint"]
 	d.CreateType = d.Fields["createtype"]
 	d.Thin = d.Fields["ddb.thinprovisioned"] == "1"
-	if d.Fields["version"] != "1" || !cidPattern.MatchString(d.CID) || !cidPattern.MatchString(d.ParentCID) || len(d.Extents) == 0 || d.CreateType == "" {
+	// ESXi writes version 3 for a disk with change block tracking enabled, and
+	// the version says nothing about the fields this package relies on.
+	switch d.Fields["version"] {
+	case "1", "2", "3":
+	default:
+		return d, fmt.Errorf("unsupported descriptor version %q", d.Fields["version"])
+	}
+	if !cidPattern.MatchString(d.CID) || !cidPattern.MatchString(d.ParentCID) || len(d.Extents) == 0 || d.CreateType == "" {
 		return d, fmt.Errorf("incomplete or invalid descriptor")
 	}
 	return d, nil

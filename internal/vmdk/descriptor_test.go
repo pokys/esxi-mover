@@ -48,3 +48,37 @@ func FuzzDescriptor(f *testing.F) {
 		}
 	})
 }
+
+// ESXi writes a version 3 descriptor for a disk with change block tracking
+// enabled. Refusing it made one such VM unreadable, and because the shared
+// disk scan reads every other VM's descriptor, that one disk blocked the
+// analysis of every other VM on the host.
+func TestParseAcceptsAChangeTrackedDescriptor(t *testing.T) {
+	text := "# Disk DescriptorFile\n" +
+		"version=3\n" +
+		"encoding=\"UTF-8\"\n" +
+		"CID=21c6c69b\n" +
+		"parentCID=ffffffff\n" +
+		"isNativeSnapshot=\"no\"\n" +
+		"createType=\"vmfs\"\n" +
+		"\n" +
+		"# Extent description\n" +
+		"RW 41963520 VMFS \"vm-flat.vmdk\"\n" +
+		"\n" +
+		"# Change Tracking File\n" +
+		"changeTrackPath=\"vm-ctk.vmdk\"\n" +
+		"ddb.thinProvisioned = \"1\"\n"
+	d, e := Parse(text)
+	if e != nil {
+		t.Fatal("a change-tracked descriptor was rejected:", e)
+	}
+	if !d.Thin || d.Bytes != 41963520*512 || len(d.Extents) != 1 {
+		t.Fatalf("descriptor parsed but fields are wrong: %+v", d)
+	}
+	if e := d.Standalone(); e != nil {
+		t.Fatal("a change-tracked standalone disk was not accepted:", e)
+	}
+	if _, e := Parse("version=9\nCID=21c6c69b\nparentCID=ffffffff\ncreateType=\"vmfs\"\nRW 8 VMFS \"x-flat.vmdk\"\n"); e == nil {
+		t.Fatal("an unknown descriptor version was accepted")
+	}
+}
