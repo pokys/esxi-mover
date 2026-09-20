@@ -254,3 +254,37 @@ func TestCapabilityProbeDoesNotRelyOnTheCommandBuiltin(t *testing.T) {
 		}
 	}
 }
+
+// A real 6.5 host rejected its whole inventory because vim-cmd prints VM
+// annotations inline: a VM with notes spans several lines, and every
+// continuation line failed the row pattern.
+func TestParseVMsAcceptsMultiLineAnnotations(t *testing.T) {
+	out := "Vmid   Name        File                                    Guest OS       Version   Annotation\n" +
+		"7      Lab Server  [datastore1] Lab Server/Lab Server.vmx    otherGuest64   vmx-13\n" +
+		"12     Noted VM    [Store B] Noted VM/Noted VM.vmx           ubuntu64Guest  vmx-13    status checks:\n" +
+		"second line of the note\n" +
+		"\n" +
+		"third line: https://example.invalid/page\n" +
+		"21     Last VM     [Store B] Last VM/Last VM.vmx             debian9Guest   vmx-13\n"
+	vms, e := ParseVMs(out)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(vms) != 3 {
+		t.Fatalf("expected 3 VMs, got %d: %+v", len(vms), vms)
+	}
+	if vms[2].ID != 21 || vms[2].Name != "Last VM" {
+		t.Fatalf("the row following an annotation was lost: %+v", vms[2])
+	}
+}
+
+// Only a row that actually carried notes may be continued; the parser must
+// still refuse an inventory it does not understand.
+func TestParseVMsStillRejectsUnknownRows(t *testing.T) {
+	out := "Vmid   Name        File                                    Guest OS       Version   Annotation\n" +
+		"7      Lab Server  [datastore1] Lab Server/Lab Server.vmx    otherGuest64   vmx-13\n" +
+		"this row had no annotation, so this line is not a continuation\n"
+	if _, e := ParseVMs(out); e == nil {
+		t.Fatal("unrecognized inventory row accepted")
+	}
+}

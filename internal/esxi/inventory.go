@@ -35,13 +35,13 @@ type Inventory struct {
 	ExistingOperation string
 }
 
-var vmRow = regexp.MustCompile(`^\s*(\d+)\s+(.+?)\s+\[([^\]\r\n]+)\]\s+(.+?\.vmx)\s+\S+\s+vmx-\d+(?:\s+.*)?$`)
+var vmRow = regexp.MustCompile(`^\s*(\d+)\s+(.+?)\s+\[([^\]\r\n]+)\]\s+(.+?\.vmx)\s+\S+\s+vmx-\d+(?:\s+(.*))?$`)
 var spaces = regexp.MustCompile(`\s{2,}`)
 var versionPattern = regexp.MustCompile(`VMware ESXi (6\.[57]|7\.\d|8\.\d)\.`)
 
 func ParseVMs(s string) ([]VM, error) {
 	out := []VM{}
-	header := false
+	header, annotated := false, false
 	ids := map[int]bool{}
 	for _, line := range strings.Split(s, "\n") {
 		if strings.TrimSpace(line) == "" {
@@ -56,6 +56,12 @@ func ParseVMs(s string) ([]VM, error) {
 		}
 		m := vmRow.FindStringSubmatch(line)
 		if m == nil {
+			// vim-cmd prints a VM's annotation inline, so a row carrying notes
+			// continues on the lines that follow. Only such a row may be
+			// continued: anything else is still an inventory we cannot read.
+			if annotated {
+				continue
+			}
 			return nil, fmt.Errorf("unrecognized VM inventory row; inventory may include invalid VMs")
 		}
 		id, e := strconv.Atoi(m[1])
@@ -69,6 +75,7 @@ func ParseVMs(s string) ([]VM, error) {
 		if path.IsAbs(m[4]) {
 			return nil, fmt.Errorf("unexpected absolute inventory path")
 		}
+		annotated = strings.TrimSpace(m[5]) != ""
 		out = append(out, VM{id, strings.TrimSpace(m[2]), m[3], "[" + m[3] + "] " + m[4]})
 	}
 	if !header {
