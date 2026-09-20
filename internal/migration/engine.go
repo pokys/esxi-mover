@@ -73,6 +73,8 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 			s.DiskIndex = i + 1
 			s.CurrentDisk = d.Source
 			s.Progress = 0
+			s.DiskStarted = time.Now()
+			s.DiskBytes = d.Provisioned
 		})
 		// Last local OFF check; the detached worker checks it again on ESXi.
 		if err = e.requireOff(ctx, r.VM.ID); err != nil {

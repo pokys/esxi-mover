@@ -307,7 +307,7 @@ func testOptions() Options {
 }
 func analyze(t *testing.T, h *fakeHost, mode string, on bool) Report {
 	t.Helper()
-	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", mode, on})
+	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", mode, on, ""})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -474,7 +474,7 @@ func TestSnapshotLayersBlockAnalyze(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newFake(1)
 			change(h)
-			r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false})
+			r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
 			if e == nil && r.Ready {
 				t.Fatal("snapshot accepted")
 			}
@@ -493,7 +493,7 @@ func TestUnsafeConfigurationsBlock(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newFake(1)
 			change(h)
-			r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "MOVE", false})
+			r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "MOVE", false, ""})
 			if e == nil && r.Ready {
 				t.Fatal("unsupported feature accepted")
 			}
@@ -514,7 +514,7 @@ func TestDatastoreFilesystemAllowlist(t *testing.T) {
 			t.Run(fmt.Sprintf("store%d_%s", index, kind), func(t *testing.T) {
 				h := newFake(1)
 				h.ds[index].Type = kind
-				r, err := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false})
+				r, err := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -587,7 +587,7 @@ func TestSelfMigrationUUID(t *testing.T) {
 		t.Fatal("SMBIOS endianness not handled")
 	}
 	h := newFake(1)
-	r, e := (Analyzer{h, "02014d56-0403-0605-0708-091011121314"}).Analyze(context.Background(), Request{7, "target", "COPY", false})
+	r, e := (Analyzer{h, "02014d56-0403-0605-0708-091011121314"}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
 	if e != nil || r.Ready {
 		t.Fatal("self migration accepted")
 	}
@@ -682,7 +682,7 @@ func TestFreeSpaceIsSizedOnAllocationAndWarnsAboutGrowth(t *testing.T) {
 	} {
 		h := newFake(1)
 		h.ds[1].Free = tc.free
-		r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false})
+		r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -718,14 +718,14 @@ RW 2097152 VMFS "other-flat.vmdk"
 `
 		return h
 	}
-	r, e := (Analyzer{Host: build("other.vmdk")}).Analyze(context.Background(), Request{7, "target", "COPY", false})
+	r, e := (Analyzer{Host: build("other.vmdk")}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if got := reportStatus(r, "Shared disk inventory"); got != "OK" {
 		t.Fatalf("a chain contained in the other VM's own directory blocked: %s", got)
 	}
-	r, e = (Analyzer{Host: build("[source] lab/d0.vmdk")}).Analyze(context.Background(), Request{7, "target", "COPY", false})
+	r, e = (Analyzer{Host: build("[source] lab/d0.vmdk")}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -748,5 +748,53 @@ func TestVMSDAcceptsARealEmptyFile(t *testing.T) {
 		if VMSD(s) == nil {
 			t.Fatalf("active or stale VMSD metadata accepted: %q", s)
 		}
+	}
+}
+
+// The target folder is named after the source VM's own folder, not after an
+// opaque job ID, and an existing folder is never touched.
+func TestTargetFolderIsNamedAfterTheSource(t *testing.T) {
+	h := newFake(1)
+	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if path.Base(r.TargetDir) != "lab" {
+		t.Fatalf("target folder is not named after the source: %s", r.TargetDir)
+	}
+	// An explicit name wins.
+	r, e = (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, "lab-copy"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if path.Base(r.TargetDir) != "lab-copy" {
+		t.Fatalf("explicit target folder ignored: %s", r.TargetDir)
+	}
+	// A name that is not a plain directory name is refused outright.
+	for _, bad := range []string{"../escape", "sub/dir", ".hidden"} {
+		if _, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, bad}); e == nil {
+			t.Fatalf("unsafe target folder accepted: %q", bad)
+		}
+	}
+}
+
+func TestExistingTargetFolderBlocksAndSuggestsAFreeName(t *testing.T) {
+	h := newFake(1)
+	h.directories["/vmfs/volumes/target/lab"] = true
+	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
+	if e != nil {
+		t.Fatal(e)
+	}
+	detail := ""
+	for _, c := range r.Checks {
+		if c.Name == "Target directory" {
+			detail = c.Detail
+		}
+	}
+	if reportStatus(r, "Target directory") != "BLOCK" {
+		t.Fatal("an existing target folder was not blocked")
+	}
+	if !strings.Contains(detail, "lab-2") {
+		t.Fatalf("no free name was offered: %q", detail)
 	}
 }

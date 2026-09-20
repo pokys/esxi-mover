@@ -93,7 +93,17 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 	if targetMount != path.Join("/vmfs/volumes", target.UUID) {
 		return r, fmt.Errorf("target datastore UUID path is not canonical")
 	}
-	r.TargetDir = path.Join(targetMount, fmt.Sprintf("esxi-mover-%d-%s", req.VMID, id))
+	// A folder named after the source VM is what an administrator expects to
+	// find on the target. Uniqueness comes from refusing to touch an existing
+	// directory, not from burying a job ID in its name.
+	folder := strings.TrimSpace(req.TargetName)
+	if folder == "" {
+		folder = path.Base(r.SourceDir)
+	}
+	if e := esxi.ValidPath(folder); e != nil || strings.Contains(folder, "/") || strings.HasPrefix(folder, ".") {
+		return r, fmt.Errorf("target folder name must be a plain directory name")
+	}
+	r.TargetDir = path.Join(targetMount, folder)
 	r.TargetVMX = path.Join(r.TargetDir, path.Base(r.SourceVMX))
 	r.TargetFree = target.Free
 	exists, e := a.Host.Exists(ctx, r.TargetDir)
@@ -101,7 +111,11 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 		return r, e
 	}
 	if exists && !targetCreated {
-		r.check("Target directory", "BLOCK", "Target already exists; it will never be overwritten")
+		detail := folder + " already exists on the target datastore and is never overwritten."
+		if free, e := a.freeFolder(ctx, targetMount, folder); e == nil && free != "" {
+			detail += " " + free + " is free; enter it as the target folder."
+		}
+		r.check("Target directory", "BLOCK", detail)
 	}
 	r.Power, e = a.Host.Power(ctx, req.VMID)
 	if e != nil {
@@ -373,6 +387,22 @@ func (a Analyzer) localFile(ctx context.Context, ref, dir string, ds []esxi.Data
 	}
 	return canonical, nil
 }
+// freeFolder offers the first unused variant of a name so a collision leaves
+// the operator with an answer rather than a puzzle.
+func (a Analyzer) freeFolder(ctx context.Context, mount, folder string) (string, error) {
+	for i := 2; i <= 9; i++ {
+		candidate := fmt.Sprintf("%s-%d", folder, i)
+		used, e := a.Host.Exists(ctx, path.Join(mount, candidate))
+		if e != nil {
+			return "", e
+		}
+		if !used {
+			return candidate, nil
+		}
+	}
+	return "", nil
+}
+
 func (a Analyzer) sharedCheck(ctx context.Context, inv esxi.Inventory, id int, backings map[string]bool) error {
 	for _, other := range inv.VMs {
 		if other.ID == id {

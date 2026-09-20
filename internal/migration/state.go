@@ -10,7 +10,8 @@ type State struct {
 	ID, Phase, Message, Error, CurrentDisk, TechnicalLog             string
 	Mode                                                             string
 	Progress, DiskIndex, DiskCount, TargetVMID                       int
-	Started, Updated                                                 time.Time
+	Started, Updated, DiskStarted                                    time.Time
+	DiskBytes                                                        int64
 	Complete, TargetVerified, SourceFilesPreserved, CanRollback      bool
 	SourceRegistration, TargetRegistration, SourcePower, TargetPower string
 	SourceVMX, TargetVMX                                             string
