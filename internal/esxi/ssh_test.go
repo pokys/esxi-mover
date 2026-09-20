@@ -158,3 +158,31 @@ func TestSSHFailureNamesTheCauseWithoutLeaking(t *testing.T) {
 		t.Fatal("pinned host key failure was not identified", e)
 	}
 }
+
+// Every command used to pay for a full handshake, which dominated an analysis
+// issuing well over a hundred of them.
+func TestSSHReusesOneAuthenticatedConnection(t *testing.T) {
+	addr, fp, count := sshFixture(t)
+	exec, e := NewSSH(SSHOptions{Address: addr, User: "root", Password: "fixture-password", Fingerprint: fp})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer exec.Close()
+	for i := 0; i < 5; i++ {
+		if _, e := exec.Run(context.Background(), Command{Category: "test", Script: "anything"}); e != nil {
+			t.Fatal("command failed on a reused connection:", e)
+		}
+	}
+	if n := count.Load(); n != 1 {
+		t.Fatalf("expected one authentication for five commands, got %d", n)
+	}
+	// A changed pin must never be answered from the pool.
+	before := count.Load()
+	exec.options.Fingerprint = "SHA256:wrong"
+	if _, e := exec.Run(context.Background(), Command{Category: "test", Script: "anything"}); e == nil {
+		t.Fatal("a pooled connection served a changed host key")
+	}
+	if count.Load() != before {
+		t.Fatal("credentials were sent to a host whose key no longer matches")
+	}
+}
