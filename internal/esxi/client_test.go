@@ -288,3 +288,20 @@ func TestParseVMsStillRejectsUnknownRows(t *testing.T) {
 		t.Fatal("unrecognized inventory row accepted")
 	}
 }
+
+// Shapes taken from a real ESXi 6.5.0 build-5969303 host. The synthetic
+// fixtures were idealized, so several parsers met their first real input in
+// production; these lock the observed output in.
+func TestRealHostShapes(t *testing.T) {
+	// od -c confirmed LF only, no CR and no trailing bytes.
+	p, e := ParsePower("Retrieved runtime info\nPowered on\n")
+	if e != nil || p != On {
+		t.Fatal("real power output rejected", e, p)
+	}
+	// An ampersand and spaces are ordinary in VM names.
+	raw := "        vmPathName = \"[DataStore1] VeeamB&R/VeeamB&R.vmx\",\n"
+	got, e := ParseVMPath(raw)
+	if e != nil || got != "[DataStore1] VeeamB&R/VeeamB&R.vmx" {
+		t.Fatal("real authoritative VMX path rejected", e, got)
+	}
+}

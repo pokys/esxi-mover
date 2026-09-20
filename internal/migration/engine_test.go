@@ -629,3 +629,25 @@ func TestSnapshotClassification(t *testing.T) {
 		}
 	}
 }
+
+// A real ESXi 6.5 host reports an empty tree as the bare header, and a
+// populated one with VMware's own "Desciption" spelling, nested CHILD levels
+// and descriptions that themselves span lines. Every populated tree must block.
+func TestSnapshotManagerOnRealHostOutput(t *testing.T) {
+	if e := SnapshotManager("Get Snapshot:\n"); e != nil {
+		t.Fatal("empty tree rejected", e)
+	}
+	nested := "Get Snapshot:\n" +
+		"|-ROOT\n" +
+		"--Snapshot Name        : Snapshot 1\n" +
+		"--Snapshot Id        : 4\n" +
+		"--Snapshot Desciption  : admin,chrome,codec\n" +
+		"second line of the description\n" +
+		"--Snapshot Created On  : 11/30/2021 12:8:43\n" +
+		"--Snapshot State       : powered on\n" +
+		"--|-CHILD\n" +
+		"----Snapshot Name        : Snapshot 2\n"
+	if SnapshotManager(nested) == nil {
+		t.Fatal("a populated snapshot tree was not blocked")
+	}
+}
