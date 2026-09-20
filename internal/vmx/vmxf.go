@@ -7,17 +7,22 @@ import (
 	"strings"
 )
 
-// ValidateVMXF accepts standalone metadata without external/team backings.
-// The VMX basename does not change during a datastore move, so no rewrite is
-// needed for a relative vmxPathName. Absolute paths and unknown dependencies block.
+// ValidateVMXF accepts standalone metadata and blocks external or team
+// backings. A real host stores a VMware Tools manifest here, with dozens of
+// element and attribute names no whitelist can predict, so the shape of the
+// document is not the signal: a value naming another file or datastore is.
+// The VMX basename does not change during a datastore move, so a relative
+// vmxPathName needs no rewrite.
 func ValidateVMXF(raw, vmxName string) error {
+	external := func(value string) bool {
+		low := strings.ToLower(value)
+		return strings.ContainsAny(value, "/\\") || strings.HasPrefix(value, "[") ||
+			strings.Contains(low, ".vmdk") || strings.Contains(low, ".vmx")
+	}
 	d := xml.NewDecoder(strings.NewReader(raw))
-	depth := 0
-	root := false
+	depth, vmCount, pathCount := 0, 0, 0
+	root, hasVMXPath := false, false
 	stack := []string{}
-	parents := map[string]string{"Foundry": "", "VM": "Foundry", "VMId": "VM", "ClientMetaData": "VM", "clientMetaDataAttributes": "ClientMetaData", "HistoryEventList": "ClientMetaData", "vmxPathName": "VM"}
-	vmCount, pathCount := 0, 0
-	hasVMXPath := false
 	for {
 		t, e := d.Token()
 		if e == io.EOF {
@@ -28,19 +33,8 @@ func ValidateVMXF(raw, vmxName string) error {
 		}
 		switch v := t.(type) {
 		case xml.StartElement:
-			parent, known := parents[v.Name.Local]
-			actualParent := ""
-			if depth > 0 {
-				actualParent = stack[depth-1]
-			}
-			if !known || v.Name.Space != "" || parent != actualParent {
-				return fmt.Errorf("unknown or non-standalone VMXF structure")
-			}
-			if v.Name.Local == "VM" {
-				vmCount++
-			}
-			if v.Name.Local == "vmxPathName" {
-				pathCount++
+			if v.Name.Space != "" {
+				return fmt.Errorf("namespaced VMXF element is unsupported")
 			}
 			if depth == 0 {
 				if root || v.Name.Local != "Foundry" {
@@ -48,9 +42,18 @@ func ValidateVMXF(raw, vmxName string) error {
 				}
 				root = true
 			}
+			switch v.Name.Local {
+			case "VM":
+				vmCount++
+			case "vmxPathName":
+				pathCount++
+			}
 			for _, attr := range v.Attr {
-				if attr.Name.Space != "" || attr.Name.Local != "type" || attr.Value != "string" {
-					return fmt.Errorf("unknown VMXF attribute")
+				if attr.Name.Space != "" {
+					return fmt.Errorf("namespaced VMXF attribute is unsupported")
+				}
+				if external(attr.Value) {
+					return fmt.Errorf("external VMXF dependency")
 				}
 			}
 			stack = append(stack, v.Name.Local)
@@ -66,17 +69,15 @@ func ValidateVMXF(raw, vmxName string) error {
 			if value == "" {
 				continue
 			}
-			if strings.ContainsAny(value, "/\\") || strings.HasPrefix(value, "[") || strings.Contains(strings.ToLower(value), ".vmdk") {
-				return fmt.Errorf("external VMXF dependency")
-			}
-			if depth > 0 && stack[depth-1] == "vmxPathName" && value != vmxName {
-				return fmt.Errorf("VMXF points to a different VMX")
-			}
 			if depth > 0 && stack[depth-1] == "vmxPathName" {
+				if value != vmxName {
+					return fmt.Errorf("VMXF points to a different VMX")
+				}
 				hasVMXPath = true
+				continue
 			}
-			if depth == 0 || (stack[depth-1] != "VMId" && stack[depth-1] != "vmxPathName") {
-				return fmt.Errorf("unknown VMXF metadata value")
+			if external(value) {
+				return fmt.Errorf("external VMXF dependency")
 			}
 		case xml.ProcInst:
 			if v.Target != "xml" {
@@ -86,8 +87,10 @@ func ValidateVMXF(raw, vmxName string) error {
 			return fmt.Errorf("VMXF directives are unsupported")
 		}
 	}
-	if !root || depth != 0 || vmCount != 1 || pathCount != 1 || !hasVMXPath {
-		return fmt.Errorf("incomplete VMXF")
+	// Exactly one VM rules out a team file. A vmxPathName is optional, but when
+	// present it must name this VM's own configuration.
+	if !root || depth != 0 || vmCount != 1 || pathCount > 1 || (pathCount == 1 && !hasVMXPath) {
+		return fmt.Errorf("unknown or non-standalone VMXF structure")
 	}
 	return nil
 }

@@ -80,3 +80,28 @@ func FuzzVMXRoundTrip(f *testing.F) {
 		}
 	})
 }
+
+// A real ESXi 6.5 host stores a VMware Tools manifest in the VMXF: dozens of
+// element and attribute names, no vmxPathName at all. It names no other file,
+// so it is standalone and must be accepted.
+func TestVMXFAcceptsAToolsManifest(t *testing.T) {
+	manifest := `<?xml version="1.0"?>` +
+		`<Foundry><VM/><tools-install-info><installError>21004</installError>` +
+		`<updateCounter>2</updateCounter></tools-install-info><tools-manifest>` +
+		`<Unity installed="TRUE" version="10.2.0.1608"/>` +
+		`<vmxnet3_Win8 installed="TRUE" version="1.7.3.15"/>` +
+		`<monolithic version="10.2.0"/></tools-manifest></Foundry>`
+	if e := ValidateVMXF(manifest, "vm.vmx"); e != nil {
+		t.Fatal("a standalone tools manifest was rejected:", e)
+	}
+	// The signal is a reference to another file, wherever it appears.
+	for _, s := range []string{
+		`<Foundry><VM/><tools-manifest><Plugin path="/vmfs/volumes/x/other.vmx"/></tools-manifest></Foundry>`,
+		`<Foundry><VM/><note>[datastore1] other/other.vmdk</note></Foundry>`,
+		`<Foundry><VM/><VM/></Foundry>`,
+	} {
+		if ValidateVMXF(s, "vm.vmx") == nil {
+			t.Fatalf("unsafe VMXF accepted: %s", s)
+		}
+	}
+}

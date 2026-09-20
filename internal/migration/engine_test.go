@@ -733,3 +733,20 @@ RW 2097152 VMFS "other-flat.vmdk"
 		t.Fatalf("a chain reaching a source disk was allowed: %s", got)
 	}
 }
+
+// After the last snapshot is deleted a real host leaves the counter behind and
+// writes no numSnapshots, which blocked every VM that had ever had a snapshot.
+func TestVMSDAcceptsARealEmptyFile(t *testing.T) {
+	empty := ".encoding = \"UTF-8\"\nsnapshot.lastUID = \"2032\"\n"
+	if e := VMSD(empty); e != nil {
+		t.Fatal("an empty VMSD from a real host was rejected:", e)
+	}
+	for _, s := range []string{
+		".encoding = \"UTF-8\"\nsnapshot.numSnapshots = \"1\"\n",
+		".encoding = \"UTF-8\"\nsnapshot.lastUID = \"3\"\nsnapshot.uid0.filename = \"vm-000001.vmsn\"\n",
+	} {
+		if VMSD(s) == nil {
+			t.Fatalf("active or stale VMSD metadata accepted: %q", s)
+		}
+	}
+}
