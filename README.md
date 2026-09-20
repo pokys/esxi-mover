@@ -210,7 +210,9 @@ MOVER_IMAGE=esxi-mover:local sh ./start.sh
 | MOVE | Unregistered, all files retained | Registered, off by default |
 | MOVE + Power On | Unregistered, all files retained | Registered, on after confirmed success |
 
-1. Connect, select VM and a different target VMFS datastore.
+1. Connect, select VM and a different target VMFS datastore. The target folder
+   is named after the source VM's folder unless you enter another name; an
+   existing folder blocks the migration and a free name is offered.
 2. Choose COPY or MOVE. Power On is a separate, default-off MOVE option.
 3. Analyze the report, disk sizes, warnings and blocking checks.
 4. Confirm a current backup and exclusive maintenance access; start the job.

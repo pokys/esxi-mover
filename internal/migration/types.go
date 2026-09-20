@@ -44,6 +44,8 @@ type Request struct {
 	VMID             int
 	TargetUUID, Mode string
 	PowerOn          bool
+	// Empty means the source folder's own name.
+	TargetName string
 }
 type Check struct{ Name, Status, Detail string }
 type Disk struct {
