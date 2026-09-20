@@ -641,7 +641,7 @@ func TestSnapshotManagerOnRealHostOutput(t *testing.T) {
 		"|-ROOT\n" +
 		"--Snapshot Name        : Snapshot 1\n" +
 		"--Snapshot Id        : 4\n" +
-		"--Snapshot Desciption  : admin,chrome,codec\n" +
+		"--Snapshot Desciption  : tools, codecs, reader\n" +
 		"second line of the description\n" +
 		"--Snapshot Created On  : 11/30/2021 12:8:43\n" +
 		"--Snapshot State       : powered on\n" +
