@@ -24,6 +24,7 @@ type Executor interface {
 type Event struct {
 	Time       time.Time
 	Category   string
+	Command    string
 	DurationMS int64
 	ExitCode   int
 	Error      string
@@ -91,7 +92,13 @@ func (c *Client) run(ctx context.Context, category, script string, input []byte)
 	if e != nil {
 		msg = e.Error()
 	}
-	c.Audit.Add(Event{start, category, time.Since(start).Milliseconds(), r.ExitCode, msg})
+	// The script itself is the part that makes a failure diagnosable. It never
+	// carries credentials, but redact it like any other displayed value.
+	shown := c.Redact(script)
+	if len(shown) > 400 {
+		shown = strings.ToValidUTF8(shown[:400], "") + " ..."
+	}
+	c.Audit.Add(Event{start, category, shown, time.Since(start).Milliseconds(), r.ExitCode, msg})
 	return r, e
 }
 func (c *Client) command(ctx context.Context, cat string, args ...string) (string, error) {
