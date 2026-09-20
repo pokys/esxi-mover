@@ -29,6 +29,34 @@ Keep the console attached: Docker persistent logging is disabled. The token is
 valid for this application run. It is not saved by the app or exposed in responses.
 Use a trusted management network; do not expose the root-credential UI publicly.
 
+## Run with a standalone Compose file
+
+Use [compose.image.yaml](compose.image.yaml) to run the published GHCR image.
+This single file can be copied to an empty directory: no Git checkout, Dockerfile
+or source build is needed. Docker must already be running and the Compose plugin
+must be installed. Authenticate with `docker login ghcr.io -u pokys` first if the
+package is private; use a GitHub token (classic) with `read:packages` as the password.
+
+On the Linux appliance, run these commands in the directory containing the file:
+
+```sh
+export MOVER_APPLIANCE_UUID="$(cat /sys/class/dmi/id/product_uuid)"
+docker compose -f compose.image.yaml up --abort-on-container-exit
+```
+
+Passing the appliance BIOS UUID enables self-migration detection. The image is
+pulled from `ghcr.io/pokys/esxi-mover:latest`; use `MOVER_IMAGE` to select another
+published tag or digest. Open `https://APPLIANCE_IP:8443` and use the token printed
+in this console. Keep it attached during migrations: logging to disk is disabled
+and application state is held in RAM.
+
+The file preserves the read-only filesystem, dropped capabilities, 256 MiB memory
+limit and default-off restart policy. `MOVER_BIND_ADDRESS` can restrict the published
+port to the appliance's management address. For a previously downloaded image
+without registry access, use `up --pull never --abort-on-container-exit`.
+
+The original `compose.yaml` remains available for local source builds with `start.sh`.
+
 ## Alpine Live quick start
 
 Boot Alpine Live (for example via netboot.xyz), obtain DHCP and run as root.
@@ -335,7 +363,7 @@ internal/web/      sessions, CSRF, endpoints, ephemeral TLS, embedded UI
 fixtures/          synthetic ESXi 6.5/6.7/7.0/8.0 and disk/config samples
 scripts/           portable container image packaging
 .github/workflows/ test, race, vet, Docker build and GHCR publication
-Dockerfile · compose.yaml · start.sh · TESTING.md · LICENSE
+Dockerfile · compose.yaml · compose.image.yaml · start.sh · TESTING.md · LICENSE
 ```
 
 Implementation references: Broadcom's [vmkfstools cloning guidance](https://knowledge.broadcom.com/external/article/343140/cloning-and-converting-virtual-machine-d.html),

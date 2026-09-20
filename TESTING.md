@@ -25,6 +25,7 @@ published it to GHCR in [this successful run](https://github.com/pokys/esxi-move
 | Dockerfile build / container entrypoint | Passed on the GitHub Linux runner; full Docker/ESXi integration remains untested |
 | GitHub build/publish workflow | `actionlint` passed; hosted results are available in [GitHub Actions](https://github.com/pokys/esxi-mover/actions) |
 | Prebuilt image deployment | Compose image/security settings validated; mocked Docker verified local build, registry pull, both offline modes and failure on unsuccessful pull |
+| Standalone image Compose | `compose.image.yaml` validated in an empty directory, including image/address/UUID overrides and security limits; CI runs the built image through this file |
 | OpenRC startup handling | Mocked service failures stop before deployment; delayed daemon readiness succeeds; a 30-second timeout stops deployment; no automatic network restart or dependency bypass |
 | Real ESXi 6.5/6.7/7.x/8.x operations | **Not run: no ESXi host available** |
 
