@@ -49,6 +49,41 @@ The container runs as a non-root user with a read-only filesystem, no added
 capabilities, no volumes and a 256 MiB memory limit. State, credentials and audit
 events remain in RAM. A reboot loses the application's state by design.
 
+### Alpine Live: Docker blocked by the networking service
+
+If OpenRC reports `ifquery: could not parse /etc/network/interfaces` and
+`cannot start docker as networking would not start`, Docker is blocked by a
+host network configuration error. This happens before ESXi Mover starts.
+Do not overwrite the interfaces file or restart a working network just to launch
+the application.
+
+For a temporary Live session where networking already works (for example, the
+repository was just cloned successfully), prepare Docker's filesystem dependencies
+and start only Docker without dependency traversal:
+
+```sh
+rc-service sysfs start &&
+rc-service cgroups start &&
+rc-service --nodeps docker start
+docker info
+```
+
+Proceed only when `docker info` succeeds. From the project directory, pull the
+prebuilt image to avoid a Go/Docker build in the Live system's RAM filesystem:
+
+```sh
+MOVER_IMAGE=ghcr.io/pokys/esxi-mover:latest sh ./start.sh
+```
+
+This is a temporary workaround for an already-connected Live host. It does not
+repair `/etc/network/interfaces`; fix that configuration separately before relying
+on networking after a reboot. The normal script still starts Docker with its
+dependencies and never applies this workaround automatically. If the package is
+private, authenticate to GHCR as described below before pulling.
+
+References: [Alpine's Docker service dependencies](https://github.com/alpinelinux/aports/blob/master/community/docker/docker.initd)
+and [OpenRC's `--nodeps` option](https://github.com/OpenRC/openrc/blob/master/man/rc-service.8).
+
 ## GitHub-built Docker images
 
 The GitHub Actions workflow builds a `linux/amd64` image on pushes and pull requests.
@@ -71,6 +106,11 @@ Actions must be enabled and repository policies must permit package writes.
 For anonymous pulls, set the GHCR package visibility to **Public** after its first
 publication. A public repository alone does not make a newly published package
 public. Otherwise authenticate to GHCR before pulling the private package.
+
+For a private package, run `docker login ghcr.io -u pokys` and enter a GitHub
+personal access token (classic) with `read:packages` at the password prompt. Do
+not use the GitHub account password or put the token in a command, repository or
+support screenshot. See [GitHub's registry authentication guide](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-with-a-personal-access-token-classic).
 
 Once an image exists, use the checkout's normal start script on Alpine:
 
