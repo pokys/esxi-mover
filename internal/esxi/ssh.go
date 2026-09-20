@@ -41,7 +41,19 @@ func NewSSH(o SSHOptions) (*SSHExecutor, error) {
 		}
 		auth = []ssh.AuthMethod{ssh.PublicKeys(signer)}
 	} else if o.Password != "" {
-		auth = []ssh.AuthMethod{ssh.Password(o.Password)}
+		// A client only attempts a method the server advertises. ESXi builds
+		// differ in whether they offer "password", "keyboard-interactive" or
+		// both, so offer both and answer every prompt with the same password.
+		auth = []ssh.AuthMethod{
+			ssh.Password(o.Password),
+			ssh.KeyboardInteractive(func(_, _ string, questions []string, _ []bool) ([]string, error) {
+				answers := make([]string, len(questions))
+				for i := range answers {
+					answers[i] = o.Password
+				}
+				return answers, nil
+			}),
+		}
 	} else {
 		return nil, fmt.Errorf("SSH credentials are required")
 	}
@@ -124,6 +136,30 @@ func (s *SSHExecutor) Redact(v string) string {
 	}
 	return v
 }
+
+// describe names which of the four failure causes occurred. Method names and
+// algorithm lists are not secrets, but the underlying text is redacted anyway.
+func (s *SSHExecutor) describe(e error) string {
+	var timeout net.Error
+	if errors.As(e, &timeout) && timeout.Timeout() {
+		return "the host did not answer in time; check the address, port and any firewall"
+	}
+	var op *net.OpError
+	if errors.As(e, &op) {
+		return "the host is not reachable on this address and port"
+	}
+	m := s.Redact(e.Error())
+	switch {
+	case strings.Contains(m, "host key changed"):
+		return "the host key no longer matches the fingerprint you confirmed"
+	case strings.Contains(m, "no common algorithm"):
+		return "no SSH algorithm in common with the host (" + m + ")"
+	case strings.Contains(m, "unable to authenticate"):
+		return "the host rejected the credentials (" + m + ")"
+	}
+	return "unexpected SSH failure (" + m + ")"
+}
+
 func (s *SSHExecutor) Run(ctx context.Context, cmd Command) (Result, error) {
 	cfg := &ssh.ClientConfig{User: s.options.User, Auth: s.auth, HostKeyCallback: func(_ string, _ net.Addr, k ssh.PublicKey) error {
 		if subtle.ConstantTimeCompare([]byte(ssh.FingerprintSHA256(k)), []byte(s.options.Fingerprint)) != 1 {
@@ -133,7 +169,7 @@ func (s *SSHExecutor) Run(ctx context.Context, cmd Command) (Result, error) {
 	}}
 	c, e := dial(ctx, s.options.Address, cfg)
 	if e != nil {
-		return Result{ExitCode: -1}, fmt.Errorf("SSH connection failed (authentication, network, algorithm or pinned host key)")
+		return Result{ExitCode: -1}, fmt.Errorf("SSH connection failed: %s", s.describe(e))
 	}
 	defer c.Close()
 	done := make(chan struct{})

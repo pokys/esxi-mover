@@ -17,6 +17,7 @@ published it to GHCR in [this successful run](https://github.com/pokys/esxi-move
 | `govulncheck` | No vulnerabilities in imported packages or reachable code; module-level notice GO-2026-5932 concerns the unused `openpgp` package |
 | `node --check internal/web/static/app.js` | Passed; Node is a development check only |
 | `sh -n start.sh` | Passed |
+| SSH password authentication | Local SSH server fixtures cover a host advertising only `keyboard-interactive` and a host advertising only `password`; failure causes are named without leaking the password. **Not verified against a real ESXi host** |
 | `docker-compose config --quiet` | Passed with the standalone Compose CLI |
 | Windows app build and live HTTPS/authentication smoke test | Passed; peer certificate fingerprint matched startup output; Secure cookie and session API verified |
 | Static Linux amd64 cross-build | Passed |

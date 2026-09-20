@@ -13,8 +13,23 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// An actual local SSH server tests the transport boundary, not only a mock.
 func sshFixture(t *testing.T) (string, string, *atomic.Int32) {
+	t.Helper()
+	count := &atomic.Int32{}
+	addr, fp := sshServer(t, &ssh.ServerConfig{PasswordCallback: func(c ssh.ConnMetadata, p []byte) (*ssh.Permissions, error) {
+		count.Add(1)
+		if c.User() == "root" && string(p) == "fixture-password" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("rejected")
+	}})
+	return addr, fp, count
+}
+
+// An actual local SSH server tests the transport boundary, not only a mock.
+// The caller supplies the accepted authentication, so hosts that advertise
+// only one method can be reproduced.
+func sshServer(t *testing.T, cfg *ssh.ServerConfig) (string, string) {
 	t.Helper()
 	_, key, e := ed25519.GenerateKey(rand.Reader)
 	if e != nil {
@@ -24,14 +39,6 @@ func sshFixture(t *testing.T) (string, string, *atomic.Int32) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	count := &atomic.Int32{}
-	cfg := &ssh.ServerConfig{PasswordCallback: func(c ssh.ConnMetadata, p []byte) (*ssh.Permissions, error) {
-		count.Add(1)
-		if c.User() == "root" && string(p) == "fixture-password" {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("rejected")
-	}}
 	cfg.AddHostKey(signer)
 	ln, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
@@ -74,7 +81,7 @@ func sshFixture(t *testing.T) (string, string, *atomic.Int32) {
 			}()
 		}
 	}()
-	return ln.Addr().String(), ssh.FingerprintSHA256(signer.PublicKey()), count
+	return ln.Addr().String(), ssh.FingerprintSHA256(signer.PublicKey())
 }
 func TestSSHProbePinsBeforeAuthentication(t *testing.T) {
 	addr, want, count := sshFixture(t)
@@ -107,5 +114,47 @@ func TestSSHCredentialErrorsAreGeneric(t *testing.T) {
 	}
 	if _, e = NewSSH(SSHOptions{Address: "127.0.0.1:22", User: "root", Password: "secret"}); e == nil {
 		t.Fatal("unpinned SSH accepted")
+	}
+}
+
+// ESXi advertises "keyboard-interactive" rather than "password" on some builds,
+// and a client only attempts a method the server lists.
+func TestSSHPasswordReachesKeyboardInteractiveOnlyHost(t *testing.T) {
+	addr, fp := sshServer(t, &ssh.ServerConfig{KeyboardInteractiveCallback: func(c ssh.ConnMetadata, challenge ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
+		answers, e := challenge("", "", []string{"Password: "}, []bool{false})
+		if e != nil {
+			return nil, e
+		}
+		if c.User() == "root" && len(answers) == 1 && answers[0] == "fixture-password" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("rejected")
+	}})
+	exec, e := NewSSH(SSHOptions{Address: addr, User: "root", Password: "fixture-password", Fingerprint: fp})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = exec.Run(context.Background(), Command{Category: "test", Script: "anything"}); e != nil {
+		t.Fatal("keyboard-interactive host rejected the typed password", e)
+	}
+}
+
+func TestSSHFailureNamesTheCauseWithoutLeaking(t *testing.T) {
+	addr, fp, _ := sshFixture(t)
+	exec, e := NewSSH(SSHOptions{Address: addr, User: "root", Password: "wrong-password", Fingerprint: fp})
+	if e != nil {
+		t.Fatal(e)
+	}
+	_, e = exec.Run(context.Background(), Command{Category: "test", Script: "anything"})
+	if e == nil || !strings.Contains(e.Error(), "rejected the credentials") {
+		t.Fatal("authentication failure was not identified", e)
+	}
+	if strings.Contains(e.Error(), "wrong-password") {
+		t.Fatal("password leaked into the error")
+	}
+	exec.options.Fingerprint = "SHA256:wrong"
+	if _, e = exec.Run(context.Background(), Command{Category: "test", Script: "anything"}); e == nil ||
+		!strings.Contains(e.Error(), "no longer matches the fingerprint") {
+		t.Fatal("pinned host key failure was not identified", e)
 	}
 }
