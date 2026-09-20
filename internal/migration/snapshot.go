@@ -64,8 +64,11 @@ func VMSD(s string) error {
 	if e != nil {
 		return fmt.Errorf("unreadable snapshot metadata")
 	}
-	// Only explicitly empty metadata is accepted. Even stale entries block V1.
-	if c["snapshot.numsnapshots"] != "0" {
+	// Only empty metadata is accepted, and even stale entries block. After the
+	// last snapshot is deleted a real host leaves just .encoding and the
+	// snapshot.lastUID counter and writes no numSnapshots at all, so an absent
+	// count means zero. Any actual entry is still caught by the loop below.
+	if n, ok := c["snapshot.numsnapshots"]; ok && n != "0" {
 		return fmt.Errorf("VMSD snapshot metadata is active or ambiguous")
 	}
 	for k, v := range c {
