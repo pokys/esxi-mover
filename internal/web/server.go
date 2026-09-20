@@ -267,6 +267,11 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, se *session) {
 		return
 	}
 	se.mu.Lock()
+	if se.host != nil {
+		if closer, ok := se.host.Exec.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+	}
 	se.host = host
 	se.report = nil
 	se.job = nil

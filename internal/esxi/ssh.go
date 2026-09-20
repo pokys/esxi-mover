@@ -18,6 +18,11 @@ type SSHOptions struct{ Address, User, Password, PrivateKey, Passphrase, Fingerp
 type SSHExecutor struct {
 	options SSHOptions
 	auth    []ssh.AuthMethod
+	mu      sync.Mutex
+	client  *ssh.Client
+	// Fingerprint the cached connection was accepted under, so a changed pin
+	// can never be served from the pool.
+	pinned string
 }
 
 func NewSSH(o SSHOptions) (*SSHExecutor, error) {
@@ -160,7 +165,19 @@ func (s *SSHExecutor) describe(e error) string {
 	return "unexpected SSH failure (" + m + ")"
 }
 
-func (s *SSHExecutor) Run(ctx context.Context, cmd Command) (Result, error) {
+// connection reuses one authenticated connection for every command. An ESXi
+// host answers a trivial command in about 130 ms, nearly all of it a fresh
+// handshake, and a single analysis issues well over a hundred commands.
+func (s *SSHExecutor) connection(ctx context.Context) (*ssh.Client, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.client != nil {
+		if s.pinned == s.options.Fingerprint {
+			return s.client, nil
+		}
+		s.client.Close()
+		s.client = nil
+	}
 	cfg := &ssh.ClientConfig{User: s.options.User, Auth: s.auth, HostKeyCallback: func(_ string, _ net.Addr, k ssh.PublicKey) error {
 		if subtle.ConstantTimeCompare([]byte(ssh.FingerprintSHA256(k)), []byte(s.options.Fingerprint)) != 1 {
 			return fmt.Errorf("host key changed")
@@ -169,23 +186,63 @@ func (s *SSHExecutor) Run(ctx context.Context, cmd Command) (Result, error) {
 	}}
 	c, e := dial(ctx, s.options.Address, cfg)
 	if e != nil {
+		return nil, e
+	}
+	s.client, s.pinned = c, s.options.Fingerprint
+	return c, nil
+}
+
+// discard retires a connection that can no longer be trusted to carry commands.
+func (s *SSHExecutor) discard(c *ssh.Client) {
+	s.mu.Lock()
+	if s.client == c {
+		s.client = nil
+	}
+	s.mu.Unlock()
+	c.Close()
+}
+
+// Close releases the pooled connection.
+func (s *SSHExecutor) Close() error {
+	s.mu.Lock()
+	c := s.client
+	s.client = nil
+	s.mu.Unlock()
+	if c != nil {
+		return c.Close()
+	}
+	return nil
+}
+
+func (s *SSHExecutor) Run(ctx context.Context, cmd Command) (Result, error) {
+	c, e := s.connection(ctx)
+	if e != nil {
 		return Result{ExitCode: -1}, fmt.Errorf("SSH connection failed: %s", s.describe(e))
 	}
-	defer c.Close()
+	session, e := c.NewSession()
+	if e != nil {
+		// The pooled connection is unusable and has carried no part of this
+		// command, so dialling again cannot repeat any remote work. A failure
+		// once the command is running is never retried.
+		s.discard(c)
+		if c, e = s.connection(ctx); e != nil {
+			return Result{ExitCode: -1}, fmt.Errorf("SSH connection failed: %s", s.describe(e))
+		}
+		if session, e = c.NewSession(); e != nil {
+			return Result{ExitCode: -1}, fmt.Errorf("SSH session unavailable")
+		}
+	}
+	defer session.Close()
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
 		select {
 		case <-ctx.Done():
-			c.Close()
+			// Close only this session; other commands share the connection.
+			session.Close()
 		case <-done:
 		}
 	}()
-	session, e := c.NewSession()
-	if e != nil {
-		return Result{ExitCode: -1}, fmt.Errorf("SSH session unavailable")
-	}
-	defer session.Close()
 	var out, errout limitedBuffer
 	session.Stdout = &out
 	session.Stderr = &errout
@@ -205,6 +262,9 @@ func (s *SSHExecutor) Run(ctx context.Context, cmd Command) (Result, error) {
 			r.ExitCode = exit.ExitStatus()
 			return r, nil
 		}
+		// A transport failure leaves this connection unfit for reuse, but the
+		// command may have run, so it is reported as unknown rather than retried.
+		s.discard(c)
 		r.ExitCode = -1
 		return r, fmt.Errorf("SSH command interrupted; remote result is unknown")
 	}

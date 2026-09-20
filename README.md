@@ -310,6 +310,11 @@ through an atomic rename. The remote worker checks the power state immediately
 before `vmkfstools`. GUI polling reads PID liveness, output/progress and exit status.
 No throughput/ETA numbers are invented.
 
+All commands share one authenticated SSH connection, so the host sees a single
+session rather than one handshake per command. A transport failure retires that
+connection; a command that was already running is reported as an unknown result
+and is never retried, because it may have taken effect.
+
 Short SSH failures are observed for up to five minutes without relaunching a disk.
 After that the UI stops with an unknown outcome; the ESXi worker may still be running.
 A browser disconnect does not cancel the backend. An Alpine restart loses the state
