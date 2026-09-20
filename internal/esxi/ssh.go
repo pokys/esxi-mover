@@ -62,7 +62,7 @@ func NewSSH(o SSHOptions) (*SSHExecutor, error) {
 	} else {
 		return nil, fmt.Errorf("SSH credentials are required")
 	}
-	return &SSHExecutor{o, auth}, nil
+	return &SSHExecutor{options: o, auth: auth}, nil
 }
 
 // ProbeHostKey aborts the handshake in the host-key callback, before any user
