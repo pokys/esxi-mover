@@ -173,6 +173,13 @@ func (e *Engine) requireOff(ctx context.Context, id int) error {
 	}
 	return nil
 }
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "") + " ..."
+}
+
 func pause(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
@@ -395,18 +402,22 @@ func (e *Engine) powerOn(ctx context.Context, j *Job) error {
 			return err
 		}
 		j.update(func(s *State) { s.TargetPower = string(p) })
-		if p == esxi.On {
-			j.update(func(s *State) { s.CanRollback = false })
-			return nil
-		}
 		message, err := e.Host.Message(ctx, s.TargetVMID)
 		if err != nil {
 			return err
 		}
-		if strings.TrimSpace(message) != "" && strings.TrimSpace(message) != "No message." && strings.TrimSpace(message) != "No message" {
+		pending := strings.TrimSpace(message) != "" && strings.TrimSpace(message) != "No message." && strings.TrimSpace(message) != "No message"
+		// A VM blocked on a question already reports Powered on while the guest
+		// has not started, so an open question outranks the power state.
+		if !pending && p == esxi.On {
+			j.update(func(s *State) { s.CanRollback = false })
+			return nil
+		}
+		if pending {
 			id, choice, err := esxi.MovedAnswer(message)
 			if err != nil {
-				return err
+				// The question itself is what makes this answerable by hand.
+				return fmt.Errorf("%w; ESXi asked: %s", err, truncate(strings.TrimSpace(message), 400))
 			}
 			if answered {
 				return fmt.Errorf("VM question remained after answering; manual review required")

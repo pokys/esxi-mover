@@ -277,9 +277,8 @@ func (h *fakeHost) PowerOn(_ context.Context, id int) error {
 	if h.powerFail {
 		return fmt.Errorf("power-on failure")
 	}
-	if h.question == "" {
-		h.power[id] = esxi.On
-	}
+	// A real host reports Powered on even while a question blocks the boot.
+	h.power[id] = esxi.On
 	return nil
 }
 func (h *fakeHost) Message(context.Context, int) (string, error) {
@@ -294,6 +293,7 @@ func (h *fakeHost) Answer(_ context.Context, id int, message, choice string) err
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.lastAnswer = message + ":" + choice
+	h.question = ""
 	h.power[id] = esxi.On
 	return nil
 }
@@ -813,5 +813,28 @@ func TestAnalyzerTargetDirectoryIsOneTheEngineAccepts(t *testing.T) {
 	}
 	if reportStatus(r, "Target directory") == "BLOCK" {
 		t.Fatal("a usable target directory was blocked")
+	}
+}
+
+// The exact shape Broadcom documents for vim-cmd vmsvc/message, which a real
+// host produced at the end of the first MOVE. The VM reports Powered on while
+// the question blocks the boot, so answering it must not be skipped.
+func TestMovedQuestionIsAnsweredWhileTheVMReportsPoweredOn(t *testing.T) {
+	h := newFake(1)
+	h.question = "Virtual machine message 12:\n" +
+		"msg.uuid.altered:This virtual machine may have been moved or copied.\n" +
+		"\n" +
+		"Did you move this virtual machine, or did you copy it?\n" +
+		"If you don't know, answer \"I copied it\".\n" +
+		"\n" +
+		"0. Cancel (Cancel)\n" +
+		"1. I _moved it (I _moved it)\n" +
+		"2. I _copied it (I _copied it) [default]\n"
+	j, _ := run(t, h, "MOVE", true)
+	if s := j.Snapshot(); s.Phase != "completed" {
+		t.Fatalf("the migration did not complete: %s %s", s.Phase, s.Error)
+	}
+	if h.lastAnswer != "12:1" {
+		t.Fatalf("the moved question was not answered: %q", h.lastAnswer)
 	}
 }
