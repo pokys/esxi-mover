@@ -4,7 +4,9 @@
 
 Development environment: Windows amd64; Go 1.27.1; portable Clang for Go's race
 detector; Git's POSIX shell for worker/quoting execution; Docker Compose 5.5.1 for
-configuration validation. No ESXi endpoint or Docker daemon was available.
+configuration validation. No ESXi endpoint or local Docker daemon was available.
+GitHub's Linux runner subsequently built and smoke-tested the container and
+published it to GHCR in [this successful run](https://github.com/pokys/esxi-mover/actions/runs/35467439023).
 
 | Check | Result |
 | --- | --- |
@@ -20,9 +22,10 @@ configuration validation. No ESXi endpoint or Docker daemon was available.
 | Static Linux amd64 cross-build | Passed |
 | Portable Docker image archive | Created; manifest/config/layer hashes and static ELF contents verified |
 | Browser workflow with synthetic data | Login, fingerprint confirmation, selection, preflight, disabled/enabled Start and COPY result verified |
-| Docker image startup / Dockerfile build | **Not run: no Docker daemon available** |
+| Dockerfile build / container entrypoint | Passed on the GitHub Linux runner; full Docker/ESXi integration remains untested |
 | GitHub build/publish workflow | `actionlint` passed; hosted results are available in [GitHub Actions](https://github.com/pokys/esxi-mover/actions) |
 | Prebuilt image deployment | Compose image/security settings validated; mocked Docker verified local build, registry pull, both offline modes and failure on unsuccessful pull |
+| OpenRC startup handling | Mocked service failures stop before deployment; delayed daemon readiness succeeds; a 30-second timeout stops deployment; no automatic network restart or dependency bypass |
 | Real ESXi 6.5/6.7/7.x/8.x operations | **Not run: no ESXi host available** |
 
 Fixtures are explicitly synthetic. Fuzz seed tests run in the normal suite; this

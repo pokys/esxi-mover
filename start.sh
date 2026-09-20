@@ -4,7 +4,22 @@ cd "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 command -v docker >/dev/null 2>&1 || { printf '%s\n' 'Install Docker first: apk add docker docker-cli-compose'; exit 1; }
 if ! docker info >/dev/null 2>&1; then
   if command -v rc-service >/dev/null 2>&1; then
-    rc-service docker start
+    if ! rc-service docker start; then
+      printf '%s\n' \
+        'OpenRC could not start Docker. ESXi Mover has not started.' \
+        'If networking failed with "could not parse /etc/network/interfaces", see the Alpine Live troubleshooting section in README.md.' \
+        'Do not restart a working network or overwrite its configuration to start this application.' >&2
+      exit 1
+    fi
+    mover_wait=0
+    until docker info >/dev/null 2>&1; do
+      if [ "$mover_wait" -ge 30 ]; then
+        printf '%s\n' 'Docker did not become ready within 30 seconds. Check rc-service docker status and /var/log/docker.log.' >&2
+        exit 1
+      fi
+      sleep 1
+      mover_wait=$((mover_wait + 1))
+    done
   else
     printf '%s\n' 'Start the Docker daemon, then run this script again.'
     exit 1
