@@ -1,6 +1,6 @@
 # ESXi Mover
 
-Moves or copies a powered-off VM between VMFS datastores on a **standalone ESXi**
+Moves or copies a VM between VMFS datastores on a **standalone ESXi**
 host (Free editions included). No vCenter, no paid API: a small web app drives the
 host over SSH and clones disks with `vmkfstools`.
 
