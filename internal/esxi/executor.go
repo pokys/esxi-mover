@@ -111,7 +111,7 @@ func (c *Client) run(ctx context.Context, category, script string, input []byte)
 	if len(shown) > 400 {
 		shown = strings.ToValidUTF8(shown[:400], "") + " ..."
 	}
-	c.Audit.Add(Event{start, category, shown, time.Since(start).Milliseconds(), r.ExitCode, msg})
+	c.Audit.Add(Event{Time: start, Category: category, Command: shown, DurationMS: time.Since(start).Milliseconds(), ExitCode: r.ExitCode, Error: msg})
 	return r, e
 }
 func (c *Client) command(ctx context.Context, cat string, args ...string) (string, error) {
