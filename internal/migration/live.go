@@ -78,7 +78,7 @@ func (e *Engine) live(ctx context.Context, j *Job) (err error) {
 			return fresh, err
 		}
 		if fresh.Power != esxi.On {
-			return fresh, fmt.Errorf("live migration needs the source running; analyze again for a cold migration")
+			return fresh, fmt.Errorf("the source is no longer running; analyze again without shutting down at the end")
 		}
 		return fresh, nil
 	}

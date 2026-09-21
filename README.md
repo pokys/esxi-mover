@@ -54,7 +54,8 @@ Use a trusted management network. The page accepts ESXi root credentials.
 
 1. **Connect.** Enter the ESXi host, compare the SSH host key with the ESXi
    console, and sign in with a password or private key.
-2. **Choose.** Pick the VM, the target datastore and **Copy** or **Move**. The
+2. **Choose.** Pick the VM, the target datastore and **Copy only** or **Copy
+   and switch**. The
    target folder keeps the source folder's name; if it is taken, a free name is
    suggested.
 3. **Review.** The preflight shows where the VM goes and one verdict. Anything
@@ -62,31 +63,33 @@ Use a trusted management network. The page accepts ESXi root credentials.
 4. **Migrate.** The tool shuts the VM down gracefully, clones each disk thin,
    verifies the result and only then switches registration.
 
-| Mode | Source afterwards | Target afterwards |
-| --- | --- | --- |
-| Copy | Registered, off | Verified, not registered |
-| Move | Not registered, files kept | Registered, off, or on if chosen |
+Both shut the VM down and copy it; they differ only in the last step.
 
-A moved VM keeps its identity (`uuid.action = "keep"`), so ESXi does not ask
-"moved or copied?" at power-on. A copy is left without it: started next to its
-original, it must get a new identity.
+| Operation | Source afterwards | Target afterwards |
+| --- | --- | --- |
+| Copy only | Registered, off | Verified, not registered |
+| Copy and switch | Not registered, files kept | Registered, off, or on with **Start the target** |
+
+A switched VM keeps its identity (`uuid.action = "keep"`), so ESXi does not ask
+"moved or copied?" at power-on. A copy only is left without it: started next
+to its original, it must get a new identity.
 
 ### Live migration (experimental)
 
-**Keep the VM running while copying** changes only *when* the VM is shut down,
-never the result. Copy and Move end exactly as they do without it, and the
-tool never starts the source.
+**Shut down only at the end** changes only *when* the VM is shut down, never
+the result: both operations end exactly as they do without it, and the tool
+never starts the source.
 
 1. The tool takes a snapshot of its own (no memory, no quiescing), so the base
    disks become read-only, and clones them to the target while the VM runs.
 2. It then shuts the VM down and copies only the snapshot deltas and metadata,
    what the guest wrote during the clone, and verifies the whole chain.
-3. **Copy** registers the copy only long enough to merge its snapshot, then
-   merges the source's snapshot too. **Move** switches registration, powers
-   the target on if chosen, and merges the snapshot there.
+3. **Copy only** registers the copy just long enough to merge its snapshot,
+   then merges the source's snapshot too. **Copy and switch** switches
+   registration, starts the target if chosen, and merges the snapshot there.
 
 The outage is the time from the shutdown to the end instead of the whole copy.
-Until a move switches registration, any failure puts the source back as it
+Until registration switches, any failure puts the source back as it
 was registered, without the snapshot; if it had already been shut down, it
 stays off. The tool only ever merges its own snapshot, named `esxi-mover-…`:
 if the VM has any other snapshot, it stops for manual review. The source
