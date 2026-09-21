@@ -61,6 +61,8 @@ merging the snapshot on the running copy and on the running source.
 The tool's live MOVE then ran on that host end to end: clone while running,
 about 38 s of outage (guest shutdown, delta copy and the full safety checks),
 no question at power-on, and the snapshot merged on the running target.
+It later ran the same way on a second host for a production Windows server:
+about a minute of outage instead of about 17.
 
 **Not yet exercised on a real host:** live COPY, the Stop link, SSH key sign-in,
 Force Power Off, rollback, rejected registration, SSH loss or an appliance
