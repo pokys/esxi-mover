@@ -16,14 +16,14 @@ import (
 
 // Live migration (experimental).
 //
-// The VM keeps running while its base disks are cloned behind a snapshot the
-// job takes itself. A COPY then merges that snapshot back into the source and
-// is done. A MOVE shuts the VM down, copies only what the guest wrote in the
-// meantime (the snapshot delta), switches registration and powers the target
-// on, where the snapshot is merged while the VM runs.
+// Live changes only when the source is shut down, never the result. The VM
+// keeps running while its base disks are cloned behind a snapshot the job
+// takes itself; then it is shut down, and only what it wrote in the meantime
+// (the snapshot delta) is copied. A COPY and a MOVE then end exactly like
+// their cold counterparts, and the tool never starts the source.
 //
-// Until the target runs, every failure restores the source as it was:
-// registered, running, without the snapshot. Nothing is ever deleted; what was
+// Until a MOVE switches registration, every failure puts the source back as
+// it was registered, without the snapshot. Nothing is ever deleted; what was
 // written to the target folder stays there for inspection.
 
 func liveSnapshot(id string) string { return "esxi-mover-" + id[:8] }
@@ -54,7 +54,7 @@ func (e *Engine) runLive(ctx context.Context, j *Job) {
 		j.update(func(s *State) {
 			s.Phase = phaseRolledBack
 			s.Error = restored.cause.Error()
-			s.Message = "Nothing changed: the source runs as before, without the temporary snapshot. Files written to the target folder are kept for inspection."
+			s.Message = "Nothing was switched. The source is registered as before, without the temporary snapshot; if it had already been shut down, start it in Host Client. Files written to the target folder are kept."
 			s.Complete = true
 			s.CanRollback = false
 		})
@@ -95,14 +95,14 @@ func (e *Engine) live(ctx context.Context, j *Job) (err error) {
 	name := liveSnapshot(r.ID)
 	j.phase(phaseSnapshot, "Taking a temporary snapshot; the VM keeps running")
 	snapErr := e.Host.CreateSnapshot(ctx, r.VM.ID, name)
-	// From here the snapshot may exist, even when the reply was lost. Until the
-	// target runs, every failure merges it again and restarts the source.
-	targetRuns := false
+	// From here the snapshot may exist, even when the reply was lost. Until a
+	// MOVE switches registration, every failure merges it again.
+	committed := false
 	defer func() {
-		if err == nil || targetRuns {
+		if err == nil || committed {
 			return
 		}
-		j.phase(phaseRestoring, "Restoring the source: merging the temporary snapshot and starting the VM again")
+		j.phase(phaseRestoring, "Restoring the source: registering it as before and merging the temporary snapshot")
 		if rerr := e.restoreSource(ctx, j, r, name); rerr != nil {
 			err = fmt.Errorf("%v; restoring the source needs manual review: %v", err, rerr)
 			return
@@ -150,11 +150,9 @@ func (e *Engine) live(ctx context.Context, j *Job) (err error) {
 			return err
 		}
 	}
-	if r.Request.Mode == modeCopy {
-		return e.liveCopy(ctx, j, r, name)
-	}
 
-	// Cutover: from the graceful shutdown until the target runs, the VM is down.
+	// Cutover. A cold migration shuts the source down at the start, a live one
+	// only now; the result is the same and only the downtime differs.
 	if err = e.liveGuard(ctx, r, name, deltas); err != nil {
 		return err
 	}
@@ -207,72 +205,82 @@ func (e *Engine) live(ctx context.Context, j *Job) (err error) {
 		return err
 	}
 	j.update(func(s *State) { s.TargetVerified = true })
-	if err = e.commit(ctx, j, r); err != nil {
-		return err
-	}
-	if err = e.powerOn(ctx, j); err != nil {
-		return err
-	}
-	targetRuns = true
 
-	// The migration is done. Merging the snapshot on the running target is
-	// housekeeping: when it fails the VM simply keeps running on the snapshot.
-	dst := j.Snapshot().TargetVMID
-	j.phase(phaseConsolidating, "Merging the temporary snapshot on the target; the VM is running")
+	message := "Completed. The copy holds everything up to the shutdown and is left unregistered. The source is off; start it in Host Client when you need it."
 	warning := ""
-	if cerr := e.Host.ConsolidateOwnSnapshot(ctx, dst, name); cerr != nil {
-		warning = cerr.Error()
-	} else if verr := e.merged(ctx, dst, r.TargetVMX, diskNames(r.Disks, nil)); verr != nil {
-		warning = verr.Error()
+	if r.Request.Mode == modeCopy {
+		if err = e.mergeCopy(ctx, j, r, name); err != nil {
+			return err
+		}
+	} else {
+		if err = e.commit(ctx, j, r); err != nil {
+			return err
+		}
+		// The target now holds the VM; from here a failure is not undone.
+		committed = true
+		if r.Request.PowerOn {
+			if err = e.powerOn(ctx, j); err != nil {
+				return err
+			}
+		}
+		// Merging the snapshot on the target is housekeeping: if it fails, the
+		// VM simply runs on the snapshot until it is consolidated by hand.
+		dst := j.Snapshot().TargetVMID
+		j.phase(phaseConsolidating, "Merging the temporary snapshot on the target")
+		if cerr := e.Host.ConsolidateOwnSnapshot(ctx, dst, name); cerr != nil {
+			warning = cerr.Error()
+		} else if verr := e.merged(ctx, dst, r.TargetVMX, diskNames(r.Disks, nil)); verr != nil {
+			warning = verr.Error()
+		}
+		message = "Completed. The VM was down only while the changes were copied. No source VM files were deleted."
 	}
 	if err = e.Host.Finish(ctx, r.ID); err != nil {
 		return fmt.Errorf("migration finished but transient lock archive failed; manual review required: %w", err)
 	}
 	j.update(func(s *State) {
 		s.Phase = phaseCompleted
-		s.Message = "Completed. The VM runs on the target; it was down only while the changes were copied. No source VM files were deleted."
+		s.Message = message
 		s.Complete = true
 		s.CanRollback = false
 		s.SourcePower = "Powered off"
 		if warning != "" {
-			s.Error = "The VM runs on the target, but its temporary snapshot " + name + " could not be merged (" + warning + "). Consolidate it in Host Client."
+			s.Error = "The target's temporary snapshot " + name + " could not be merged (" + warning + "). Consolidate it in Host Client."
 		}
 	})
 	return nil
 }
 
-// liveCopy finishes a live COPY: the target holds the base disks as they were
-// at the snapshot, and the source gets its snapshot merged back.
-func (e *Engine) liveCopy(ctx context.Context, j *Job, r Report, name string) error {
-	if err := j.proceed(phaseVerifyingConfig, "Writing and verifying the target configuration"); err != nil {
+// mergeCopy leaves a live COPY like a cold one. The copy is registered only
+// long enough to merge its snapshot and stays off throughout; then the
+// source's snapshot is merged too. The source stays off, as after any shutdown.
+func (e *Engine) mergeCopy(ctx context.Context, j *Job, r Report, name string) error {
+	j.phase(phaseConsolidating, "Merging the snapshot into the copy; it is registered only for this and stays off")
+	id, registerErr := e.Host.Register(ctx, r.TargetVMX)
+	src, dst, err := e.registrations(ctx, r.SourceVMX, r.TargetVMX)
+	if err != nil {
 		return err
 	}
-	if err := copyConfig(ctx, e.Host, r, r.TargetConfig, diskNames(r.Disks, nil)); err != nil {
+	if dst == 0 || src != r.VM.ID || (registerErr == nil && dst != id) {
+		return fmt.Errorf("the copy could not be registered to merge its snapshot (%v)", registerErr)
+	}
+	if err = e.requireOff(ctx, dst); err != nil {
 		return err
 	}
-	for _, d := range r.Disks {
-		if err := verifyDisk(ctx, e.Host, d); err != nil {
-			return err
-		}
-	}
-	j.update(func(s *State) { s.TargetVerified = true })
-	j.phase(phaseConsolidating, "Merging the temporary snapshot back into the source; the VM keeps running")
-	if err := e.Host.ConsolidateOwnSnapshot(ctx, r.VM.ID, name); err != nil {
+	if err = e.Host.ConsolidateOwnSnapshot(ctx, dst, name); err != nil {
 		return err
 	}
-	if err := e.merged(ctx, r.VM.ID, r.SourceVMX, sourceNames(r)); err != nil {
+	if err = e.merged(ctx, dst, r.TargetVMX, diskNames(r.Disks, nil)); err != nil {
 		return err
 	}
-	if err := e.Host.Finish(ctx, r.ID); err != nil {
-		return fmt.Errorf("migration finished but transient lock archive failed; manual review required: %w", err)
+	unregisterErr := e.Host.Unregister(ctx, dst)
+	if _, dst, err = e.registrations(ctx, r.SourceVMX, r.TargetVMX); err != nil || dst != 0 {
+		return fmt.Errorf("the copy stayed registered after merging (%v)", unregisterErr)
 	}
-	j.update(func(s *State) {
-		s.Phase = phaseCompleted
-		s.Message = "Completed. The copy holds the disks as they were when the snapshot was taken, like after a power cut. The source kept running."
-		s.Complete = true
-		s.SourcePower = "Powered on"
-	})
-	return nil
+	j.phase(phaseConsolidating, "Merging the temporary snapshot back into the source")
+	if err = e.Host.ConsolidateOwnSnapshot(ctx, r.VM.ID, name); err != nil {
+		return err
+	}
+	return e.merged(ctx, r.VM.ID, r.SourceVMX, sourceNames(r))
 }
 
 // liveDeltas confirms the VM runs on exactly the job's snapshot and finds, for
@@ -493,9 +501,9 @@ func sourceNames(r Report) map[string]string {
 }
 
 // restoreSource undoes a live migration that did not finish: the target is
-// unregistered if it got registered, the source registered again, the job's
-// snapshot merged and the source started. It refuses anything it cannot prove
-// safe, such as a running target or a snapshot it did not take.
+// unregistered if it got registered, the source registered again and the
+// job's snapshot merged. The source is never started. It refuses anything it
+// cannot prove safe, such as a running target or a snapshot it did not take.
 func (e *Engine) restoreSource(ctx context.Context, j *Job, r Report, name string) error {
 	src, dst, err := e.registrations(ctx, r.SourceVMX, r.TargetVMX)
 	if err != nil {
@@ -540,43 +548,8 @@ func (e *Engine) restoreSource(ctx context.Context, j *Job, r Report, name strin
 	if err = e.merged(ctx, src, r.SourceVMX, sourceNames(r)); err != nil {
 		return err
 	}
-	if err = e.startSource(ctx, src); err != nil {
-		return err
+	if p, perr := e.Host.Power(ctx, src); perr == nil {
+		j.update(func(s *State) { s.SourcePower = string(p) })
 	}
-	j.update(func(s *State) { s.SourcePower = "Powered on" })
 	return e.Host.Finish(ctx, r.ID)
-}
-
-func (e *Engine) startSource(ctx context.Context, id int) error {
-	p, err := e.Host.Power(ctx, id)
-	if err != nil {
-		return err
-	}
-	if p == esxi.On {
-		return nil
-	}
-	powerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	powerErr := e.Host.PowerOn(powerCtx, id)
-	cancel()
-	deadline := time.Now().Add(e.Options.PowerOnTimeout)
-	for time.Now().Before(deadline) {
-		p, err := e.Host.Power(ctx, id)
-		if err != nil {
-			return err
-		}
-		message, err := e.Host.Message(ctx, id)
-		if err != nil {
-			return err
-		}
-		if t := strings.TrimSpace(message); t != "" && t != "No message." && t != "No message" {
-			return fmt.Errorf("the source asks a question at power-on; answer it in Host Client")
-		}
-		if p == esxi.On {
-			return nil
-		}
-		if err = pause(ctx, e.Options.PollInterval); err != nil {
-			return err
-		}
-	}
-	return fmt.Errorf("the source did not power on again (%v)", powerErr)
 }

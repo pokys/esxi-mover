@@ -73,23 +73,24 @@ original, it must get a new identity.
 
 ### Live migration (experimental)
 
-**Keep the VM running while copying** migrates a running VM with a short
-outage instead of a full cold copy:
+**Keep the VM running while copying** changes only *when* the VM is shut down,
+never the result. Copy and Move end exactly as they do without it, and the
+tool never starts the source.
 
 1. The tool takes a snapshot of its own (no memory, no quiescing), so the base
    disks become read-only, and clones them to the target while the VM runs.
-2. **Copy** then merges the snapshot back into the source. The copy holds the
-   disks as they were at the snapshot, like a VM after a power cut.
-3. **Move** shuts the VM down, copies only the snapshot deltas and metadata
-   (what the guest wrote during the clone), verifies the whole chain, switches
-   registration and starts the VM on the target, where the snapshot is merged
-   while it runs. The outage is the guest shutdown plus the delta copy.
+2. It then shuts the VM down and copies only the snapshot deltas and metadata,
+   what the guest wrote during the clone, and verifies the whole chain.
+3. **Copy** registers the copy only long enough to merge its snapshot, then
+   merges the source's snapshot too. **Move** switches registration, powers
+   the target on if chosen, and merges the snapshot there.
 
-It is all or nothing. Until the VM runs on the target, any failure unregisters
-the target if needed, merges the snapshot back into the source and starts the
-source again. The tool only ever merges its own snapshot, named
-`esxi-mover-…`: if the VM has any other snapshot, it stops for manual review.
-The source datastore must have room for the changes written during the copy.
+The outage is the time from the shutdown to the end instead of the whole copy.
+Until a move switches registration, any failure puts the source back as it
+was registered, without the snapshot; if it had already been shut down, it
+stays off. The tool only ever merges its own snapshot, named `esxi-mover-…`:
+if the VM has any other snapshot, it stops for manual review. The source
+datastore must have room for the changes written during the copy.
 
 The **Technical log** at the bottom lists every SSH command with its exit code
 and duration; **Copy** puts it on the clipboard.
@@ -118,7 +119,8 @@ the exact VMX). It is not a checksum of every sector, and not a boot test.
 irreversible step (registration, the live cutover, merging a snapshot); after
 that it disappears. It ends the running clone and registers nothing. A cold
 migration leaves the source as it is, off if it was already shut down. A live
-one merges its snapshot back and keeps the source running.
+one merges its snapshot back; the source keeps running, as it has not been
+shut down yet.
 
 - **Closing the browser** does not stop anything. Reopen the page in the same
   browser and the job is shown again.

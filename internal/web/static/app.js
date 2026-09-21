@@ -19,18 +19,15 @@ $('auth').addEventListener('change',()=>{const key=$('auth').value==='key';show(
 $('connectForm').addEventListener('submit',event=>{event.preventDefault();action(async()=>{const key=$('auth').value==='key';const d=await api('connect',{Username:$('username').value,Password:key?'':$('password').value,PrivateKey:key?$('privateKey').value:'',Passphrase:key?$('passphrase').value:'',Fingerprint:fingerprint,Confirmed:true});for(const id of ['password','privateKey','passphrase'])$(id).value='';$('hostInfo').textContent=$('host').value+' · '+d.Capabilities.Version;connected($('host').value);$('vm').replaceChildren();d.VMs.forEach(v=>{const o=text('option',v.Name+' — '+v.Datastore);o.value=v.ID;$('vm').append(o);});$('datastore').replaceChildren();stores={};d.Datastores.forEach(x=>{stores[x.UUID]=x.Name;});d.Datastores.filter(x=>x.Mounted&&['VMFS-5','VMFS-6'].includes(x.Type)).forEach(x=>{const o=text('option',x.Name+' · '+size(x.Free)+' free');o.value=x.UUID;$('datastore').append(o);});show('existing',Boolean(d.ExistingOperation));$('existing').textContent=d.ExistingOperation;show('selection');show('audit');show('connect',false);},'Signing in to '+$('host').value+' and reading virtual machines and datastores');});
 const mode=()=>document.querySelector('input[name=mode]:checked').value;
 const hints={
- COPY:'The VM is shut down and stays off. The copy holds everything up to the shutdown and is left unregistered.',
- MOVE:'The VM is off during the copy and is registered on the target afterwards. Nothing is lost.',
- liveCOPY:'The VM keeps running. The copy is the VM as it was when copying started; later changes are not in it.',
- liveMOVE:'The VM keeps running during the copy and is off for about a minute at the end. Nothing is lost; if anything fails, the source runs on.'
+ COPY:'The VM is shut down at the start and stays off. The copy holds everything up to the shutdown and is left unregistered.',
+ MOVE:'The VM is shut down at the start. The target holds everything up to the shutdown and takes its place in the inventory.',
+ liveCOPY:'The VM keeps running during the copy and is shut down only at the end, then stays off. The copy holds everything up to the shutdown and is left unregistered.',
+ liveMOVE:'The VM keeps running during the copy and is shut down only at the end. The target holds everything up to the shutdown and takes its place in the inventory.'
 };
 function modeChanged(){
  const move=mode()==='MOVE',live=$('live').checked;
  show('moveOptions',move);
  if(!move)$('powerOn').checked=false;
- // A live move ends with the VM running on the target.
- if(move&&live)$('powerOn').checked=true;
- $('powerOn').disabled=move&&live;
  $('modeHint').textContent=hints[(live?'live':'')+mode()];
 }
 modeChanged();
@@ -44,7 +41,7 @@ function renderReport(d){
  const move=d.Request.Mode==='MOVE';
  $('fromStore').textContent=d.SourceDatastore;$('fromDir').textContent=base(d.SourceDir)+'/';
  $('toStore').textContent=stores[d.Request.TargetUUID]||'target datastore';$('toDir').textContent=base(d.TargetDir)+'/';
- $('routeMode').textContent=(d.Request.Live?'LIVE ':'')+d.Request.Mode+(move&&d.Request.PowerOn&&!d.Request.Live?' + power on':'');
+ $('routeMode').textContent=(d.Request.Live?'LIVE ':'')+d.Request.Mode+(move&&d.Request.PowerOn?' + power on':'');
  $('modeNote').textContent=(d.Request.Live?'Experimental. ':'')+hints[(d.Request.Live?'live':'')+d.Request.Mode];
  metrics('metrics',[['Virtual machine',d.VM.Name],['Power state',d.Power],['Data to copy',size(d.Allocated)+' of '+size(d.Provisioned)],['Space needed',size(d.Required)+' of '+size(d.TargetFree)+' free']]);
  const bad=d.Checks.filter(c=>c.Status!=='OK'), blocks=bad.filter(c=>c.Status==='BLOCK').length;
@@ -74,7 +71,7 @@ for(const id of ['wait','manual','force'])$(id).addEventListener('click',()=>act
 $('rollback').addEventListener('click',()=>action(async()=>{if(!confirm('Restore source registration? The target must be powered off. Both copies and all files will remain, and neither VM will be powered on.'))return;renderJob(await api('rollback',{Confirmed:true}));},'Restoring the source registration'));
 $('stop').addEventListener('click',()=>action(async()=>{
  const what=live
-  ?'The clone in progress ends, the temporary snapshot is merged back and the source keeps running as before.'
+  ?'The clone in progress ends, the temporary snapshot is merged back and the source keeps running, since it has not been shut down yet.'
   :'The clone in progress ends and nothing is registered on the target. The source stays registered; if it was already shut down, it stays off until you start it.';
  if(!confirm('Stop the migration?\n\n'+what+' The partial target folder is kept.'))return;
  await api('control',{Action:'stop',ForceConfirmed:true});
