@@ -32,6 +32,7 @@ type fakeHost struct {
 	question                                                                                                           string
 	lastAnswer                                                                                                         string
 	pollErrors                                                                                                         int
+	snapshotFail, foreignSnapshot                                                                                      bool
 }
 
 const sourceDir = "/vmfs/volumes/source/lab"
@@ -115,6 +116,9 @@ func (h *fakeHost) Size(_ context.Context, p string) (int64, error) {
 	defer h.mu.Unlock()
 	n, ok := h.sizes[p]
 	if !ok {
+		if s, ok := h.files[p]; ok {
+			return int64(len(s)), nil
+		}
 		return 0, fmt.Errorf("extent missing")
 	}
 	return n, nil
@@ -206,10 +210,10 @@ func (h *fakeHost) WriteTarget(_ context.Context, dir, name string, data []byte)
 	h.event("config:" + name)
 	return nil
 }
-func (h *fakeHost) StartClone(_ context.Context, id string, index, vmID int, src, dst string) error {
+func (h *fakeHost) StartClone(_ context.Context, id string, index, vmID int, src, dst string, requireOff bool) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.power[vmID] != esxi.Off {
+	if requireOff && h.power[vmID] != esxi.Off {
 		return fmt.Errorf("source not off")
 	}
 	h.clones++
@@ -274,7 +278,8 @@ func (h *fakeHost) PowerOn(_ context.Context, id int) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.event(fmt.Sprintf("power-on:%d", id))
-	if h.powerFail {
+	// Only the target fails to start; a restored source must still come up.
+	if h.powerFail && id == 22 {
 		return fmt.Errorf("power-on failure")
 	}
 	// A real host reports Powered on even while a question blocks the boot.
@@ -297,6 +302,96 @@ func (h *fakeHost) Answer(_ context.Context, id int, message, choice string) err
 	h.power[id] = esxi.On
 	return nil
 }
+// vmxOf finds the VMX file behind a registered VM.
+func (h *fakeHost) vmxOf(id int) string {
+	for _, v := range h.vms {
+		if v.ID == id {
+			return strings.Replace(v.VMXPath, "[source] ", "/vmfs/volumes/source/", 1)
+		}
+	}
+	return ""
+}
+
+// CreateSnapshot does what ESXi does: every disk moves onto a seSparse delta
+// whose parent is the base disk, and VMSD and VMSN describe the snapshot.
+func (h *fakeHost) CreateSnapshot(_ context.Context, id int, name string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.event("snapshot-create")
+	if h.snapshotFail {
+		return fmt.Errorf("snapshot failed")
+	}
+	p := h.vmxOf(id)
+	dir := path.Dir(p)
+	cfg := h.files[p]
+	vmsd := ".encoding = \"UTF-8\"\nsnapshot.numSnapshots = \"1\"\nsnapshot0.filename = \"lab-Snapshot1.vmsn\"\nsnapshot0.displayName = \"" + name + "\"\n"
+	n := 0
+	for ; strings.Contains(cfg, fmt.Sprintf("\"d%d.vmdk\"", n)); n++ {
+		cfg = strings.Replace(cfg, fmt.Sprintf("\"d%d.vmdk\"", n), fmt.Sprintf("\"d%d-000001.vmdk\"", n), 1)
+		h.files[fmt.Sprintf("%s/d%d-000001.vmdk", dir, n)] = fmt.Sprintf("version=1\nCID=5678abcd\nparentCID=1234abcd\ncreateType=\"seSparse\"\nparentFileNameHint=\"d%d.vmdk\"\nRW 2097152 SESPARSE \"d%d-000001-sesparse.vmdk\"\n", n, n)
+		h.sizes[fmt.Sprintf("%s/d%d-000001-sesparse.vmdk", dir, n)] = 4 << 20
+		vmsd += fmt.Sprintf("snapshot0.disk%d.fileName = \"d%d.vmdk\"\n", n, n)
+	}
+	h.files[p] = cfg
+	h.files[dir+"/lab.vmsd"] = vmsd + fmt.Sprintf("snapshot0.numDisks = \"%d\"\n", n)
+	h.sizes[dir+"/lab-Snapshot1.vmsn"] = 32 << 10
+	h.snapshot = "Get Snapshot:\n|-ROOT\n--Snapshot Name        : " + name + "\n--Snapshot Id        : 1\n"
+	if h.foreignSnapshot {
+		h.snapshot += "----Snapshot Name        : nightly-backup\n"
+	}
+	return nil
+}
+
+// ConsolidateOwnSnapshot merges like ESXi: the VMX names the base disks again
+// and the deltas and snapshot state are gone.
+func (h *fakeHost) ConsolidateOwnSnapshot(_ context.Context, id int, name string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.event(fmt.Sprintf("consolidate:%d", id))
+	if !strings.Contains(h.snapshot, ": "+name+"\n") {
+		return fmt.Errorf("not the job's snapshot")
+	}
+	p := h.vmxOf(id)
+	dir := path.Dir(p)
+	h.files[p] = strings.ReplaceAll(h.files[p], "-000001.vmdk\"", ".vmdk\"")
+	for k := range h.files {
+		if path.Dir(k) == dir && strings.Contains(k, "-000001") {
+			delete(h.files, k)
+		}
+	}
+	for k := range h.sizes {
+		if path.Dir(k) == dir && (strings.Contains(k, "-000001") || strings.HasSuffix(k, ".vmsn")) {
+			delete(h.sizes, k)
+		}
+	}
+	h.files[dir+"/lab.vmsd"] = ".encoding = \"UTF-8\"\n"
+	h.snapshot = "Get Snapshot:\n"
+	return nil
+}
+func (h *fakeHost) CopyToTarget(_ context.Context, src, dir string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !strings.HasPrefix(dir, "/vmfs/volumes/target/") {
+		return fmt.Errorf("attempted source write")
+	}
+	dst := path.Join(dir, path.Base(src))
+	if _, ok := h.files[dst]; ok {
+		return fmt.Errorf("target file exists")
+	}
+	s, isFile := h.files[src]
+	n, isSized := h.sizes[src]
+	if !isFile && !isSized {
+		return fmt.Errorf("source file missing")
+	}
+	if isFile {
+		h.files[dst] = s
+	}
+	if isSized {
+		h.sizes[dst] = n
+	}
+	h.event("copy:" + path.Base(src))
+	return nil
+}
 func testOptions() Options {
 	o := DefaultOptions()
 	o.PollInterval = time.Millisecond
@@ -307,7 +402,7 @@ func testOptions() Options {
 }
 func analyze(t *testing.T, h *fakeHost, mode string, on bool) Report {
 	t.Helper()
-	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", mode, on, ""})
+	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: mode, PowerOn: on, TargetName: ""})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -474,7 +569,7 @@ func TestSnapshotLayersBlockAnalyze(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newFake(1)
 			change(h)
-			r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
+			r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY", PowerOn: false, TargetName: ""})
 			if e == nil && r.Ready {
 				t.Fatal("snapshot accepted")
 			}
@@ -493,7 +588,7 @@ func TestUnsafeConfigurationsBlock(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newFake(1)
 			change(h)
-			r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "MOVE", false, ""})
+			r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "MOVE", PowerOn: false, TargetName: ""})
 			if e == nil && r.Ready {
 				t.Fatal("unsupported feature accepted")
 			}
@@ -514,7 +609,7 @@ func TestDatastoreFilesystemAllowlist(t *testing.T) {
 			t.Run(fmt.Sprintf("store%d_%s", index, kind), func(t *testing.T) {
 				h := newFake(1)
 				h.ds[index].Type = kind
-				r, err := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
+				r, err := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY", PowerOn: false, TargetName: ""})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -587,7 +682,7 @@ func TestSelfMigrationUUID(t *testing.T) {
 		t.Fatal("SMBIOS endianness not handled")
 	}
 	h := newFake(1)
-	r, e := (Analyzer{h, "02014d56-0403-0605-0708-091011121314"}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
+	r, e := (Analyzer{h, "02014d56-0403-0605-0708-091011121314"}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY", PowerOn: false, TargetName: ""})
 	if e != nil || r.Ready {
 		t.Fatal("self migration accepted")
 	}
@@ -612,11 +707,20 @@ func TestNoDeletionCapability(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		for _, forbidden := range []string{`"rm"`, `"unlink"`, `"vmsvc/destroy"`, `"snapshot.remove"`, `"snapshot.removeall"`, `"vmkfstools", "-U"`} {
+		for _, forbidden := range []string{`"rm"`, `"unlink"`, `"vmsvc/destroy"`, `snapshot.remove`, `"vmkfstools", "-U"`} {
+			// The one sanctioned exception: live migration merges the snapshot it
+			// took itself, and only after checking the tree holds nothing else.
+			if forbidden == `snapshot.remove` && entry.Name() == "snapshot.go" {
+				continue
+			}
 			if strings.Contains(string(b), forbidden) {
 				t.Fatalf("source deletion primitive found: %s", entry.Name())
 			}
 		}
+	}
+	b, e := os.ReadFile("../esxi/snapshot.go")
+	if e != nil || !strings.Contains(string(b), "names[0] != name") {
+		t.Fatal("the snapshot merge lost its ownership check")
 	}
 }
 func TestSnapshotClassification(t *testing.T) {
@@ -682,7 +786,7 @@ func TestFreeSpaceIsSizedOnAllocationAndWarnsAboutGrowth(t *testing.T) {
 	} {
 		h := newFake(1)
 		h.ds[1].Free = tc.free
-		r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
+		r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY", PowerOn: false, TargetName: ""})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -718,14 +822,14 @@ RW 2097152 VMFS "other-flat.vmdk"
 `
 		return h
 	}
-	r, e := (Analyzer{Host: build("other.vmdk")}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
+	r, e := (Analyzer{Host: build("other.vmdk")}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY", PowerOn: false, TargetName: ""})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if got := reportStatus(r, "Shared disk inventory"); got != "OK" {
 		t.Fatalf("a chain contained in the other VM's own directory blocked: %s", got)
 	}
-	r, e = (Analyzer{Host: build("[source] lab/d0.vmdk")}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
+	r, e = (Analyzer{Host: build("[source] lab/d0.vmdk")}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY", PowerOn: false, TargetName: ""})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -755,7 +859,7 @@ func TestVMSDAcceptsARealEmptyFile(t *testing.T) {
 // opaque job ID, and an existing folder is never touched.
 func TestTargetFolderIsNamedAfterTheSource(t *testing.T) {
 	h := newFake(1)
-	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
+	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY", PowerOn: false, TargetName: ""})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -763,7 +867,7 @@ func TestTargetFolderIsNamedAfterTheSource(t *testing.T) {
 		t.Fatalf("target folder is not named after the source: %s", r.TargetDir)
 	}
 	// An explicit name wins.
-	r, e = (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, "lab-copy"})
+	r, e = (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY", PowerOn: false, TargetName: "lab-copy"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -772,7 +876,7 @@ func TestTargetFolderIsNamedAfterTheSource(t *testing.T) {
 	}
 	// A name that is not a plain directory name is refused outright.
 	for _, bad := range []string{"../escape", "sub/dir", ".hidden"} {
-		if _, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, bad}); e == nil {
+		if _, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY", PowerOn: false, TargetName: bad}); e == nil {
 			t.Fatalf("unsafe target folder accepted: %q", bad)
 		}
 	}
@@ -781,7 +885,7 @@ func TestTargetFolderIsNamedAfterTheSource(t *testing.T) {
 func TestExistingTargetFolderBlocksAndSuggestsAFreeName(t *testing.T) {
 	h := newFake(1)
 	h.directories["/vmfs/volumes/target/lab"] = true
-	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
+	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY", PowerOn: false, TargetName: ""})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -804,7 +908,7 @@ func TestExistingTargetFolderBlocksAndSuggestsAFreeName(t *testing.T) {
 // must settle it.
 func TestAnalyzerTargetDirectoryIsOneTheEngineAccepts(t *testing.T) {
 	h := newFake(1)
-	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{7, "target", "COPY", false, ""})
+	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY", PowerOn: false, TargetName: ""})
 	if e != nil {
 		t.Fatal(e)
 	}

@@ -165,7 +165,7 @@ func TestDetachedBuilderAndPolling(t *testing.T) {
 		return Result{}, nil
 	}}
 	c := NewClient(ex)
-	if e := c.StartClone(context.Background(), id, 0, 7, "/vmfs/volumes/source/VM's $(bad)/disk.vmdk", "/vmfs/volumes/target/esxi-mover-test/disk.vmdk"); e != nil {
+	if e := c.StartClone(context.Background(), id, 0, 7, "/vmfs/volumes/source/VM's $(bad)/disk.vmdk", "/vmfs/volumes/target/esxi-mover-test/disk.vmdk", true); e != nil {
 		t.Fatal(e)
 	}
 	script := ex.Commands[len(ex.Commands)-1].Script

@@ -71,6 +71,26 @@ A moved VM keeps its identity (`uuid.action = "keep"`), so ESXi does not ask
 "moved or copied?" at power-on. A copy is left without it: started next to its
 original, it must get a new identity.
 
+### Live migration (experimental)
+
+**Keep the VM running while copying** migrates a running VM with a short
+outage instead of a full cold copy:
+
+1. The tool takes a snapshot of its own (no memory, no quiescing), so the base
+   disks become read-only, and clones them to the target while the VM runs.
+2. **Copy** then merges the snapshot back into the source. The copy holds the
+   disks as they were at the snapshot, like a VM after a power cut.
+3. **Move** shuts the VM down, copies only the snapshot deltas and metadata
+   (what the guest wrote during the clone), verifies the whole chain, switches
+   registration and starts the VM on the target, where the snapshot is merged
+   while it runs. The outage is the guest shutdown plus the delta copy.
+
+It is all or nothing. Until the VM runs on the target, any failure unregisters
+the target if needed, merges the snapshot back into the source and starts the
+source again. The tool only ever merges its own snapshot, named
+`esxi-mover-…`: if the VM has any other snapshot, it stops for manual review.
+The source datastore must have room for the changes written during the copy.
+
 The **Technical log** at the bottom lists every SSH command with its exit code
 and duration; **Copy** puts it on the clipboard.
 
@@ -86,7 +106,8 @@ The tool stops rather than guess. It blocks:
 - a target without room for the allocated data + 15% + 1 GiB;
 - the VM the appliance itself runs in.
 
-It never consolidates snapshots, repairs disks or cleans up files.
+It never repairs disks or cleans up files, and never merges a snapshot it did
+not take itself.
 
 Verification is structural (disk chain, thin format, capacity, extent size and
 the exact VMX). It is not a checksum of every sector, and not a boot test.

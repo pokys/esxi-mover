@@ -44,13 +44,17 @@ type Host interface {
 	Finish(context.Context, string) error
 	CreateTarget(context.Context, string) error
 	WriteTarget(context.Context, string, string, []byte) error
-	StartClone(context.Context, string, int, int, string, string) error
+	StartClone(context.Context, string, int, int, string, string, bool) error
 	CloneStatus(context.Context, int) (esxi.CloneStatus, error)
 	Unregister(context.Context, int) error
 	Register(context.Context, string) (int, error)
 	PowerOn(context.Context, int) error
 	Message(context.Context, int) (string, error)
 	Answer(context.Context, int, string, string) error
+	// Live migration only. The merge acts solely on the job's own snapshot.
+	CreateSnapshot(context.Context, int, string) error
+	ConsolidateOwnSnapshot(context.Context, int, string) error
+	CopyToTarget(context.Context, string, string) error
 }
 type Request struct {
 	VMID             int
@@ -58,6 +62,8 @@ type Request struct {
 	PowerOn          bool
 	// Empty means the source folder's own name.
 	TargetName string
+	// Live keeps the VM running while its disks are copied (experimental).
+	Live bool
 }
 type Check struct{ Name, Status, Detail string }
 type Disk struct {
@@ -111,7 +117,7 @@ func DefaultOptions() Options {
 	}
 }
 func validateRequest(r Request) error {
-	if r.VMID <= 0 || r.TargetUUID == "" || (r.Mode != modeCopy && r.Mode != modeMove) || (r.Mode == modeCopy && r.PowerOn) {
+	if r.VMID <= 0 || r.TargetUUID == "" || (r.Mode != modeCopy && r.Mode != modeMove) || (r.Mode == modeCopy && r.PowerOn) || (r.Live && r.Mode == modeMove && !r.PowerOn) {
 		return fmt.Errorf("invalid migration options")
 	}
 	return nil

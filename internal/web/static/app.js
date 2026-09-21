@@ -18,19 +18,36 @@ for (const id of ['host','port']) $(id).addEventListener('input',()=>{fingerprin
 $('auth').addEventListener('change',()=>{const key=$('auth').value==='key';show('keyField',key);show('passwordField',!key);});
 $('connectForm').addEventListener('submit',event=>{event.preventDefault();action(async()=>{const key=$('auth').value==='key';const d=await api('connect',{Username:$('username').value,Password:key?'':$('password').value,PrivateKey:key?$('privateKey').value:'',Passphrase:key?$('passphrase').value:'',Fingerprint:fingerprint,Confirmed:true});for(const id of ['password','privateKey','passphrase'])$(id).value='';$('hostInfo').textContent=$('host').value+' · '+d.Capabilities.Version;connected($('host').value);$('vm').replaceChildren();d.VMs.forEach(v=>{const o=text('option',v.Name+' — '+v.Datastore);o.value=v.ID;$('vm').append(o);});$('datastore').replaceChildren();stores={};d.Datastores.forEach(x=>{stores[x.UUID]=x.Name;});d.Datastores.filter(x=>x.Mounted&&['VMFS-5','VMFS-6'].includes(x.Type)).forEach(x=>{const o=text('option',x.Name+' · '+size(x.Free)+' free');o.value=x.UUID;$('datastore').append(o);});show('existing',Boolean(d.ExistingOperation));$('existing').textContent=d.ExistingOperation;show('selection');show('audit');show('connect',false);},'Signing in to '+$('host').value+' and reading virtual machines and datastores');});
 const mode=()=>document.querySelector('input[name=mode]:checked').value;
-function modeChanged(){const move=mode()==='MOVE';show('moveOptions',move);if(!move)$('powerOn').checked=false;$('modeHint').textContent=move?'Registers the verified copy in place of the source. The source files are kept.':'Makes a verified copy and leaves it unregistered. The source stays as it is.';}
+const hints={
+ COPY:'Makes a verified copy and leaves it unregistered. The source stays as it is.',
+ MOVE:'Registers the verified copy in place of the source. The source files are kept.',
+ liveCOPY:'Copies the disks while the VM keeps running, behind a temporary snapshot. The copy is like a VM after a power cut (crash-consistent).',
+ liveMOVE:'Copies the disks while the VM keeps running, then shuts it down only to copy what changed, and starts it on the target. If anything fails, the source runs on as before.'
+};
+function modeChanged(){
+ const move=mode()==='MOVE',live=$('live').checked;
+ show('moveOptions',move);
+ if(!move)$('powerOn').checked=false;
+ // A live move ends with the VM running on the target.
+ if(move&&live)$('powerOn').checked=true;
+ $('powerOn').disabled=move&&live;
+ $('modeHint').textContent=hints[(live?'live':'')+mode()];
+}
 modeChanged();
 for(const r of document.querySelectorAll('input[name=mode]'))r.addEventListener('change',()=>{modeChanged();report=null;show('analysis',false);});
-for(const id of ['vm','datastore','powerOn'])$(id).addEventListener('change',()=>{report=null;show('analysis',false);});
+$('live').addEventListener('change',modeChanged);
+for(const id of ['vm','datastore','powerOn','live'])$(id).addEventListener('change',()=>{report=null;show('analysis',false);});
 $('targetName').addEventListener('input',()=>{report=null;show('analysis',false);});
-$('analyzeForm').addEventListener('submit',event=>{event.preventDefault();action(async()=>{report=null;show('analysis',false);const d=await api('analyze',{VMID:Number($('vm').value),TargetUUID:$('datastore').value,Mode:mode(),PowerOn:mode()==='MOVE'&&$('powerOn').checked,TargetName:$('targetName').value});report=d;$('maintenance').checked=false;$('start').disabled=true;$('readyBadge').textContent=d.Ready?'Ready':'Blocked';$('readyBadge').className='badge '+(d.Ready?'ok':'block');renderReport(d);show('analysis');$('analysis').scrollIntoView({behavior:'smooth',block:'start'});},'Running the safety checks on ESXi');});
+$('analyzeForm').addEventListener('submit',event=>{event.preventDefault();action(async()=>{report=null;show('analysis',false);const d=await api('analyze',{VMID:Number($('vm').value),TargetUUID:$('datastore').value,Mode:mode(),PowerOn:mode()==='MOVE'&&$('powerOn').checked,Live:$('live').checked,TargetName:$('targetName').value});report=d;$('maintenance').checked=false;$('start').disabled=true;$('readyBadge').textContent=d.Ready?'Ready':'Blocked';$('readyBadge').className='badge '+(d.Ready?'ok':'block');renderReport(d);show('analysis');$('analysis').scrollIntoView({behavior:'smooth',block:'start'});},'Running the safety checks on ESXi');});
 const base=p=>(p||'').split('/').filter(Boolean).pop()||'';
 function renderReport(d){
  const move=d.Request.Mode==='MOVE';
  $('fromStore').textContent=d.SourceDatastore;$('fromDir').textContent=base(d.SourceDir)+'/';
  $('toStore').textContent=stores[d.Request.TargetUUID]||'target datastore';$('toDir').textContent=base(d.TargetDir)+'/';
- $('routeMode').textContent=d.Request.Mode+(move&&d.Request.PowerOn?' + power on':'');
- $('modeNote').textContent=move?'The source files stay where they are. Registration switches to the target only after it is verified.':'The source stays registered as it is. The copy is left unregistered.';
+ $('routeMode').textContent=(d.Request.Live?'LIVE ':'')+d.Request.Mode+(move&&d.Request.PowerOn&&!d.Request.Live?' + power on':'');
+ $('modeNote').textContent=d.Request.Live
+  ?(move?'Experimental. The VM runs during the copy and is down only while the changes are copied. Until it runs on the target, any failure puts the source back as it was.':'Experimental. The VM keeps running; its temporary snapshot is merged back once the copy is verified.')
+  :(move?'The source files stay where they are. Registration switches to the target only after it is verified.':'The source stays registered as it is. The copy is left unregistered.');
  metrics('metrics',[['Virtual machine',d.VM.Name],['Power state',d.Power],['Data to copy',size(d.Allocated)+' of '+size(d.Provisioned)],['Space needed',size(d.Required)+' of '+size(d.TargetFree)+' free']]);
  const bad=d.Checks.filter(c=>c.Status!=='OK'), blocks=bad.filter(c=>c.Status==='BLOCK').length;
  $('checkSummary').textContent=blocks?blocks+' of '+d.Checks.length+' safety checks block this migration':bad.length?'Safe to start · '+bad.length+' warning'+(bad.length>1?'s':''):'All '+d.Checks.length+' safety checks passed';
@@ -52,7 +69,7 @@ function rate(j){
  return out;
 }
 const outcome={completed:'ok',rolled_back:'warn',failed:'fail',awaiting_shutdown:'warn'};
-function renderJob(j) {$('job').dataset.state=outcome[j.Phase]||(j.Complete?'fail':'running');show('nextAction',j.Complete);show('job');$('jobTitle').textContent=j.Complete?(j.Phase==='completed'?'Migration completed':j.Phase==='rolled_back'?'Registration restored':'Migration stopped'):'Migration in progress';$('phase').textContent=j.Phase.replaceAll('_',' ');$('jobMessage').textContent=j.Message;show('jobError',Boolean(j.Error));$('jobError').textContent=j.Error;$('currentDisk').textContent=j.CurrentDisk?`Disk ${j.DiskIndex} of ${j.DiskCount} · ${j.CurrentDisk}`:'';if(j.Complete||j.Phase==='cloning'){$('progress').value=j.Progress;$('percent').textContent=j.Progress+'%';}else{$('progress').removeAttribute('value');$('percent').textContent='working';}$('elapsed').textContent='Elapsed '+Math.floor(((j.Complete?new Date(j.Updated):Date.now())-new Date(j.Started))/1000)+' s'+rate(j);show('shutdownActions',j.Phase==='awaiting_shutdown');show('rollback',j.Complete&&j.CanRollback);metrics('result',[['Source registration',j.SourceRegistration],['Source power',j.SourcePower],['Target registration',j.TargetRegistration],['Target power',j.TargetPower],['Target verified',j.TargetVerified?'Yes':'Not yet'],['Source files','Preserved']]);$('jobPaths').textContent='Source: '+j.SourceVMX+'\nTarget: '+j.TargetVMX;$('cloneLog').textContent=j.TechnicalLog||'';return j;}
+function renderJob(j) {$('job').dataset.state=j.Phase==='completed'&&j.Error?'warn':outcome[j.Phase]||(j.Complete?'fail':'running');show('nextAction',j.Complete);show('job');$('jobTitle').textContent=j.Complete?(j.Phase==='completed'?'Migration completed':j.Phase==='rolled_back'?(j.Live?'Nothing changed: source restored':'Registration restored'):'Migration stopped'):'Migration in progress';$('phase').textContent=j.Phase.replaceAll('_',' ');$('jobMessage').textContent=j.Message;show('jobError',Boolean(j.Error));$('jobError').textContent=j.Error;$('currentDisk').textContent=j.CurrentDisk?`Disk ${j.DiskIndex} of ${j.DiskCount} · ${j.CurrentDisk}`:'';if(j.Complete||j.Phase==='cloning'){$('progress').value=j.Progress;$('percent').textContent=j.Progress+'%';}else{$('progress').removeAttribute('value');$('percent').textContent='working';}$('elapsed').textContent='Elapsed '+Math.floor(((j.Complete?new Date(j.Updated):Date.now())-new Date(j.Started))/1000)+' s'+rate(j);show('shutdownActions',j.Phase==='awaiting_shutdown');show('rollback',j.Complete&&j.CanRollback);metrics('result',[['Source registration',j.SourceRegistration],['Source power',j.SourcePower],['Target registration',j.TargetRegistration],['Target power',j.TargetPower],['Target verified',j.TargetVerified?'Yes':'Not yet'],['Source files','Preserved']]);$('jobPaths').textContent='Source: '+j.SourceVMX+'\nTarget: '+j.TargetVMX;$('cloneLog').textContent=j.TechnicalLog||'';return j;}
 function poll(){clearTimeout(pollTimer);pollTimer=setTimeout(async()=>{try{const j=renderJob(await api('job'));refreshAudit();if(!j.Complete)poll();}catch(e){error(e.message+' — the ESXi clone may continue.');poll();}},2000);}
 for(const id of ['wait','manual','force'])$(id).addEventListener('click',()=>action(async()=>{if(id==='force'&&!confirm('Force Power Off is equivalent to cutting power and may lose guest data. Explicitly confirm force shutdown of the selected source VM.'))return;await api('control',{Action:id,ForceConfirmed:id==='force'});},'Sending the request to ESXi'));
 $('rollback').addEventListener('click',()=>action(async()=>{if(!confirm('Restore source registration? The target must be powered off. Both copies and all files will remain, and neither VM will be powered on.'))return;renderJob(await api('rollback',{Confirmed:true}));},'Restoring the source registration'));

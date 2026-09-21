@@ -105,7 +105,11 @@ func (c *Client) WriteTarget(ctx context.Context, dir, name string, data []byte)
 	_, e := c.run(ctx, "write-target-config", "umask 077; set -C; cat > "+Quote(path.Join(dir, name)), data)
 	return e
 }
-func (c *Client) StartClone(ctx context.Context, id string, index, vmID int, source, target string) error {
+// StartClone launches one detached vmkfstools clone. With requireOff the worker
+// checks on ESXi, immediately before cloning, that the source is powered off.
+// A live migration clones the base disk behind the job's own snapshot while
+// the VM runs, so it passes false.
+func (c *Client) StartClone(ctx context.Context, id string, index, vmID int, source, target string, requireOff bool) error {
 	if !jobIDPattern.MatchString(id) || index < 0 || vmID <= 0 || path.Ext(source) != ".vmdk" || path.Ext(target) != ".vmdk" {
 		return fmt.Errorf("invalid clone request")
 	}
@@ -117,10 +121,13 @@ func (c *Client) StartClone(ctx context.Context, id string, index, vmID int, sou
 		return fmt.Errorf("operation lock ownership changed")
 	}
 	prefix := activeDir + "/disk-" + strconv.Itoa(index)
-	body := "umask 077\nprintf '%s\\n' \"$$\" > " + Quote(prefix+".pid") + "\n" +
-		"state=$(" + Argv("vim-cmd", "vmsvc/power.getstate", strconv.Itoa(vmID)) + ")\nrc=$?\n" +
-		"if [ \"$rc\" -eq 0 ]; then\ncase \"$state\" in\n'Powered off'|'Retrieved runtime info\nPowered off')\n" +
-		Argv("vmkfstools", "-i", source, target, "-d", "thin") + "\nrc=$?\n;;\n*) rc=92 ;;\nesac\nfi\n" +
+	clone := Argv("vmkfstools", "-i", source, target, "-d", "thin") + "\nrc=$?\n"
+	if requireOff {
+		clone = "state=$(" + Argv("vim-cmd", "vmsvc/power.getstate", strconv.Itoa(vmID)) + ")\nrc=$?\n" +
+			"if [ \"$rc\" -eq 0 ]; then\ncase \"$state\" in\n'Powered off'|'Retrieved runtime info\nPowered off')\n" +
+			clone + ";;\n*) rc=92 ;;\nesac\nfi\n"
+	}
+	body := "umask 077\nprintf '%s\\n' \"$$\" > " + Quote(prefix+".pid") + "\n" + clone +
 		"printf '%s\\n' \"$rc\" > " + Quote(prefix+".exit.tmp") + " && " + Argv("mv", prefix+".exit.tmp", prefix+".exit") + "\n"
 	script := "umask 077; " + Argv("mkdir", prefix+".started") + " || exit 90\n" +
 		Argv("nohup", "sh", "-c", body) + " > " + Quote(prefix+".log") + " 2>&1 < /dev/null &\n"
