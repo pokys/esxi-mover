@@ -63,8 +63,8 @@ Read the admin token and the certificate fingerprint from the container's log
 `https://APPLIANCE_IP:8443`.
 
 To choose the token yourself, for example when a Compose UI starts the container
-in the background, set `MOVER_ADMIN_TOKEN` to at least 20 characters with no
-whitespace. A supplied token is never printed; the log says it was set instead.
+in the background, set `MOVER_ADMIN_TOKEN`. A supplied token is never printed;
+the log says it was set instead.
 
 ```sh
 export MOVER_ADMIN_TOKEN="$(openssl rand -hex 24)"
