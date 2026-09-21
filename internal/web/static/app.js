@@ -41,7 +41,7 @@ function renderReport(d){
  const move=d.Request.Mode==='MOVE';
  $('fromStore').textContent=d.SourceDatastore;$('fromDir').textContent=base(d.SourceDir)+'/';
  $('toStore').textContent=stores[d.Request.TargetUUID]||'target datastore';$('toDir').textContent=base(d.TargetDir)+'/';
- $('routeMode').textContent=(d.Request.Live?'LIVE ':'')+d.Request.Mode+(move&&d.Request.PowerOn?' + power on':'');
+ $('routeMode').textContent=(move?'Copy and switch':'Copy only')+(d.Request.Live?' · shut down at the end':'')+(move&&d.Request.PowerOn?' · start':'');
  $('modeNote').textContent=(d.Request.Live?'Experimental. ':'')+hints[(d.Request.Live?'live':'')+d.Request.Mode];
  metrics('metrics',[['Virtual machine',d.VM.Name],['Power state',d.Power],['Data to copy',size(d.Allocated)+' of '+size(d.Provisioned)],['Space needed',size(d.Required)+' of '+size(d.TargetFree)+' free']]);
  const bad=d.Checks.filter(c=>c.Status!=='OK'), blocks=bad.filter(c=>c.Status==='BLOCK').length;

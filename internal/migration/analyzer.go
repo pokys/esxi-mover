@@ -136,7 +136,7 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 		r.check("Power state", statusBlock, "Suspended VM is unsupported")
 	}
 	if req.Live && r.Power != esxi.On {
-		r.check("Live migration", statusBlock, "Live migration needs a running VM; turn Live off to migrate this VM cold")
+		r.check("Shut down at the end", statusBlock, "The VM is already off, so there is nothing to shut down at the end; turn the option off")
 	}
 	raw, e := a.Host.ReadFile(ctx, r.SourceVMX)
 	if e != nil {
@@ -370,7 +370,7 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 	if r.Ready {
 		kind := "cold migration"
 		if req.Live {
-			kind = "live migration (experimental)"
+			kind = "migration that shuts down only at the end (experimental)"
 		}
 		r.check("Migration", statusOK, "Ready for a fresh preflight and "+kind)
 	}
