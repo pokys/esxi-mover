@@ -28,6 +28,8 @@ type Event struct {
 	DurationMS int64
 	ExitCode   int
 	Error      string
+	// Runs counts identical consecutive commands folded into this event.
+	Runs int
 }
 type Audit struct {
 	mu     sync.Mutex
@@ -37,6 +39,17 @@ type Audit struct {
 func (a *Audit) Add(e Event) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// Polling a clone repeats one command every few seconds. Folding repeats
+	// keeps a long clone from pushing everything before it out of the log.
+	if n := len(a.events); n > 0 {
+		last := &a.events[n-1]
+		if last.Category == e.Category && last.Command == e.Command && last.ExitCode == e.ExitCode && last.Error == e.Error {
+			last.Time, last.DurationMS = e.Time, e.DurationMS
+			last.Runs++
+			return
+		}
+	}
+	e.Runs = 1
 	a.events = append(a.events, e)
 	if len(a.events) > 500 {
 		a.events = append([]Event(nil), a.events[len(a.events)-500:]...)
