@@ -5,10 +5,13 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -45,6 +48,8 @@ func sshServer(t *testing.T, cfg *ssh.ServerConfig) (string, string) {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { ln.Close() })
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
 	go func() {
 		for {
 			conn, e := ln.Accept()
@@ -52,8 +57,9 @@ func sshServer(t *testing.T, cfg *ssh.ServerConfig) (string, string) {
 				return
 			}
 			go func() {
-				defer conn.Close()
-				c, channels, requests, e := ssh.NewServerConn(conn, cfg)
+				sc := &stallConn{Conn: conn, stall: make(chan struct{}), done: done}
+				defer sc.Close()
+				c, channels, requests, e := ssh.NewServerConn(sc, cfg)
 				if e != nil {
 					return
 				}
@@ -72,6 +78,15 @@ func sshServer(t *testing.T, cfg *ssh.ServerConfig) (string, string) {
 								continue
 							}
 							_ = req.Reply(true, nil)
+							if strings.Contains(string(req.Payload), "block-forever") {
+								// Like vim-cmd power.on behind a VM question on ESXi: the
+								// command never ends, and sshd holds the session open, so
+								// even the client closing the session goes unanswered.
+								sc.once.Do(func() { close(sc.stall) })
+								for range reqs {
+								}
+								return
+							}
 							_, _ = ch.Write([]byte("fixture-password\x00raw"))
 							_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 							return
@@ -83,6 +98,26 @@ func sshServer(t *testing.T, cfg *ssh.ServerConfig) (string, string) {
 	}()
 	return ln.Addr().String(), ssh.FingerprintSHA256(signer.PublicKey())
 }
+// stallConn stops delivering input once stalled, the way ESXi's sshd stops
+// acting on a session while its command runs. The x/crypto server would
+// otherwise answer a session close at once and hide the hang.
+type stallConn struct {
+	net.Conn
+	stall, done chan struct{}
+	once        sync.Once
+}
+
+func (c *stallConn) Read(p []byte) (int, error) {
+	n, e := c.Conn.Read(p)
+	select {
+	case <-c.stall:
+		<-c.done
+		return 0, io.EOF
+	default:
+		return n, e
+	}
+}
+
 func TestSSHProbePinsBeforeAuthentication(t *testing.T) {
 	addr, want, count := sshFixture(t)
 	fp, e := ProbeHostKey(context.Background(), addr)
@@ -184,5 +219,36 @@ func TestSSHReusesOneAuthenticatedConnection(t *testing.T) {
 	}
 	if count.Load() != before {
 		t.Fatal("credentials were sent to a host whose key no longer matches")
+	}
+}
+
+// vim-cmd power.on blocks while a VM question is pending, and the engine bounds
+// it so it can go and answer the question. Closing only the session left the
+// command hanging, so the bound never fired and the migration stalled.
+func TestSSHTimeoutAbandonsACommandThatNeverFinishes(t *testing.T) {
+	addr, fp, _ := sshFixture(t)
+	exec, e := NewSSH(SSHOptions{Address: addr, User: "root", Password: "fixture-password", Fingerprint: fp})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer exec.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, e := exec.Run(ctx, Command{Category: "test", Script: "block-forever"})
+		result <- e
+	}()
+	select {
+	case e := <-result:
+		if e == nil {
+			t.Fatal("a command that never finished reported success")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the timeout did not abandon a command the host never finishes")
+	}
+	// The next command must still work on a freshly dialled connection.
+	if _, e := exec.Run(context.Background(), Command{Category: "test", Script: "anything"}); e != nil {
+		t.Fatal("no usable connection after an abandoned command:", e)
 	}
 }
