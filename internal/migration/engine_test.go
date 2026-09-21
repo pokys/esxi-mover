@@ -24,6 +24,7 @@ type fakeHost struct {
 	power                                                                                                              map[int]esxi.Power
 	events                                                                                                             []string
 	snapshot                                                                                                           string
+	targetSnapshot                                                                                                     string
 	locked                                                                                                             bool
 	inventoryCalls, snapshotAt                                                                                         int
 	cloneFail, verifyFail                                                                                              int
@@ -140,9 +141,17 @@ func (h *fakeHost) Power(_ context.Context, id int) (esxi.Power, error) {
 	}
 	return p, nil
 }
-func (h *fakeHost) Snapshot(context.Context, int) (string, error) {
+// Snapshot reports the tree of the VM's own files: the source, or a target
+// registered with the snapshot metadata copied from the source.
+func (h *fakeHost) Snapshot(_ context.Context, id int) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if strings.Contains(h.vmxOf(id), "/target/") {
+		if h.targetSnapshot == "" {
+			return "Get Snapshot:\n", nil
+		}
+		return h.targetSnapshot, nil
+	}
 	return h.snapshot, nil
 }
 func (h *fakeHost) Shutdown(_ context.Context, id int) error {
@@ -361,10 +370,15 @@ func (h *fakeHost) ConsolidateOwnSnapshot(_ context.Context, id int, name string
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.event(fmt.Sprintf("consolidate:%d", id))
-	if !strings.Contains(h.snapshot, ": "+name+"\n") {
+	p := h.vmxOf(id)
+	target := strings.Contains(p, "/target/")
+	tree := h.snapshot
+	if target {
+		tree = h.targetSnapshot
+	}
+	if !strings.Contains(tree, ": "+name+"\n") {
 		return fmt.Errorf("not the job's snapshot")
 	}
-	p := h.vmxOf(id)
 	dir := path.Dir(p)
 	h.files[p] = strings.ReplaceAll(h.files[p], "-000001.vmdk\"", ".vmdk\"")
 	for k := range h.files {
@@ -378,7 +392,11 @@ func (h *fakeHost) ConsolidateOwnSnapshot(_ context.Context, id int, name string
 		}
 	}
 	h.files[dir+"/lab.vmsd"] = ".encoding = \"UTF-8\"\n"
-	h.snapshot = "Get Snapshot:\n"
+	if target {
+		h.targetSnapshot = "Get Snapshot:\n"
+	} else {
+		h.snapshot = "Get Snapshot:\n"
+	}
 	return nil
 }
 func (h *fakeHost) CopyToTarget(_ context.Context, src, dir string) error {
@@ -401,6 +419,10 @@ func (h *fakeHost) CopyToTarget(_ context.Context, src, dir string) error {
 	}
 	if isSized {
 		h.sizes[dst] = n
+	}
+	if strings.HasSuffix(dst, ".vmsd") {
+		// A VM registered from the copied metadata sees the same tree.
+		h.targetSnapshot = h.snapshot
 	}
 	h.event("copy:" + path.Base(src))
 	return nil

@@ -118,7 +118,7 @@ func DefaultOptions() Options {
 	}
 }
 func validateRequest(r Request) error {
-	if r.VMID <= 0 || r.TargetUUID == "" || (r.Mode != modeCopy && r.Mode != modeMove) || (r.Mode == modeCopy && r.PowerOn) || (r.Live && r.Mode == modeMove && !r.PowerOn) {
+	if r.VMID <= 0 || r.TargetUUID == "" || (r.Mode != modeCopy && r.Mode != modeMove) || (r.Mode == modeCopy && r.PowerOn) {
 		return fmt.Errorf("invalid migration options")
 	}
 	return nil
