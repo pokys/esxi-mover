@@ -2,7 +2,8 @@
 #
 # Start it, read the admin token and the HTTPS certificate fingerprint from this
 # container's log, then open https://APPLIANCE_IP:8443 and sign in with the token.
-# Both are generated fresh on every start. Run `docker compose down` when finished.
+# The certificate is generated fresh on every start, and so is the token unless
+# MOVER_ADMIN_TOKEN sets it. Run `docker compose down` when finished.
 #
 # Optional, enables self-migration protection:
 #   export MOVER_APPLIANCE_UUID="$(cat /sys/class/dmi/id/product_uuid)"
@@ -13,3 +14,5 @@ services:
       - "8443:8443"
     environment:
       MOVER_APPLIANCE_UUID: ${MOVER_APPLIANCE_UUID:-}
+      # Optional. Empty means a fresh random token, printed to the log.
+      MOVER_ADMIN_TOKEN: ${MOVER_ADMIN_TOKEN:-}

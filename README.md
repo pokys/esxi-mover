@@ -60,7 +60,18 @@ without registry access, add `--pull never`.
 
 Read the admin token and the certificate fingerprint from the container's log
 (`docker compose logs mover`, or the log pane of the Compose UI), then open
-`https://APPLIANCE_IP:8443`. To publish the port only on the appliance's management
+`https://APPLIANCE_IP:8443`.
+
+To choose the token yourself, for example when a Compose UI starts the container
+in the background, set `MOVER_ADMIN_TOKEN` to at least 20 characters with no
+whitespace. A supplied token is never printed; the log says it was set instead.
+
+```sh
+export MOVER_ADMIN_TOKEN="$(openssl rand -hex 24)"
+```
+
+The certificate fingerprint still comes only from the log, because it changes on
+every start. To publish the port only on the appliance's management
 address, change the `ports` entry to `192.0.2.20:8443:8443`.
 
 ## Alpine Live quick start
