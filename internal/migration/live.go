@@ -120,6 +120,9 @@ func (e *Engine) live(ctx context.Context, j *Job) (err error) {
 		return err
 	}
 	for i, d := range r.Disks {
+		if j.stopRequested() {
+			return errStopped
+		}
 		if err = e.liveGuard(ctx, r, name, deltas); err != nil {
 			return err
 		}
@@ -155,7 +158,9 @@ func (e *Engine) live(ctx context.Context, j *Job) (err error) {
 	if err = e.liveGuard(ctx, r, name, deltas); err != nil {
 		return err
 	}
-	j.phase(phaseCutover, "Shutting down the source to copy what changed during the clone")
+	if err = j.proceed(phaseCutover, "Shutting down the source to copy what changed during the clone"); err != nil {
+		return err
+	}
 	if err = e.shutdown(ctx, j, fresh, func() error { return e.liveGuard(ctx, r, name, deltas) }); err != nil {
 		return err
 	}
@@ -239,7 +244,9 @@ func (e *Engine) live(ctx context.Context, j *Job) (err error) {
 // liveCopy finishes a live COPY: the target holds the base disks as they were
 // at the snapshot, and the source gets its snapshot merged back.
 func (e *Engine) liveCopy(ctx context.Context, j *Job, r Report, name string) error {
-	j.phase(phaseVerifyingConfig, "Writing and verifying the target configuration")
+	if err := j.proceed(phaseVerifyingConfig, "Writing and verifying the target configuration"); err != nil {
+		return err
+	}
 	if err := copyConfig(ctx, e.Host, r, r.TargetConfig, diskNames(r.Disks, nil)); err != nil {
 		return err
 	}

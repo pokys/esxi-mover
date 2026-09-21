@@ -121,7 +121,9 @@ func (c *Client) StartClone(ctx context.Context, id string, index, vmID int, sou
 		return fmt.Errorf("operation lock ownership changed")
 	}
 	prefix := activeDir + "/disk-" + strconv.Itoa(index)
-	clone := Argv("vmkfstools", "-i", source, target, "-d", "thin") + "\nrc=$?\n"
+	// The clone's own PID is recorded so a stop can end exactly this process;
+	// the worker then still publishes the exit code.
+	clone := Argv("vmkfstools", "-i", source, target, "-d", "thin") + " &\nprintf '%s\\n' \"$!\" > " + Quote(prefix+".clonepid") + "\nwait \"$!\"\nrc=$?\n"
 	if requireOff {
 		clone = "state=$(" + Argv("vim-cmd", "vmsvc/power.getstate", strconv.Itoa(vmID)) + ")\nrc=$?\n" +
 			"if [ \"$rc\" -eq 0 ]; then\ncase \"$state\" in\n'Powered off'|'Retrieved runtime info\nPowered off')\n" +
@@ -132,6 +134,22 @@ func (c *Client) StartClone(ctx context.Context, id string, index, vmID int, sou
 	script := "umask 077; " + Argv("mkdir", prefix+".started") + " || exit 90\n" +
 		Argv("nohup", "sh", "-c", body) + " > " + Quote(prefix+".log") + " 2>&1 < /dev/null &\n"
 	_, e = c.run(ctx, "start-detached-clone", script, nil)
+	return e
+}
+// StopClone ends a running clone at the operator's request. It signals only
+// the vmkfstools process the worker recorded, and nothing once the clone has
+// finished. The worker then publishes the exit code, so the outcome is
+// observed the usual way.
+func (c *Client) StopClone(ctx context.Context, index int) error {
+	if index < 0 {
+		return fmt.Errorf("invalid clone index")
+	}
+	prefix := activeDir + "/disk-" + strconv.Itoa(index)
+	script := "if [ -f " + Quote(prefix+".exit") + " ]; then exit 0; fi\n" +
+		"p=$(cat " + Quote(prefix+".clonepid") + ")\n" +
+		"case \"$p\" in ''|*[!0-9]*) exit 1;; esac\n" +
+		"kill \"$p\"\n"
+	_, e := c.run(ctx, "stop-clone", script, nil)
 	return e
 }
 func (c *Client) CloneStatus(ctx context.Context, index int) (CloneStatus, error) {

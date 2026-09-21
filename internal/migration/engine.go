@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -23,8 +24,27 @@ func (e *Engine) Run(ctx context.Context, j *Job) {
 		return
 	}
 	if err := e.run(ctx, j); err != nil {
+		if errors.Is(err, errStopped) {
+			e.stopped(ctx, j)
+			return
+		}
 		markFailed(j, err)
 	}
+}
+
+// stopped ends a cold migration the operator stopped. By then no clone is
+// running, so the lock is released. The source is left as it is: a cold
+// migration never starts it on its own.
+func (e *Engine) stopped(ctx context.Context, j *Job) {
+	finishErr := e.Host.Finish(ctx, j.plan.ID)
+	j.update(func(s *State) {
+		s.Phase = phaseStopped
+		s.Complete = true
+		s.Message = "Stopped by you. The source is still registered (" + s.SourcePower + "); if it was shut down, start it in Host Client. Nothing was registered on the target; its partial folder is kept."
+		if finishErr != nil {
+			s.Error = "The operation lock could not be archived: " + finishErr.Error()
+		}
+	})
 }
 func (e *Engine) run(ctx context.Context, j *Job) error {
 	r := j.plan
@@ -70,6 +90,9 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 	}
 	consumed := int64(0)
 	for i, d := range r.Disks {
+		if j.stopRequested() {
+			return errStopped
+		}
 		if _, err = e.guard(ctx, r, true, consumed); err != nil {
 			return err
 		}
@@ -105,7 +128,9 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 	if _, err = e.guard(ctx, r, true, consumed); err != nil {
 		return err
 	}
-	j.phase(phaseVerifyingConfig, "Copying only selected configuration files and verifying target VMX")
+	if err = j.proceed(phaseVerifyingConfig, "Copying only selected configuration files and verifying target VMX"); err != nil {
+		return err
+	}
 	if err = copyConfig(ctx, e.Host, r, r.TargetConfig, diskNames(r.Disks, nil)); err != nil {
 		return err
 	}
@@ -213,6 +238,9 @@ func (e *Engine) shutdown(ctx context.Context, j *Job, r Report, revalidate func
 		deadline = time.Now()
 	}
 	for {
+		if j.stopRequested() {
+			return errStopped
+		}
 		p, err := e.Host.Power(ctx, r.VM.ID)
 		if err != nil {
 			return err
@@ -230,6 +258,9 @@ func (e *Engine) shutdown(ctx context.Context, j *Job, r Report, revalidate func
 			case <-ctx.Done():
 				return ctx.Err()
 			case action := <-j.actions:
+				if action == "stop" {
+					return errStopped
+				}
 				if action == "force" {
 					if err := revalidate(); err != nil {
 						return err
@@ -251,7 +282,14 @@ func (e *Engine) waitClone(ctx context.Context, j *Job, index int, startErr erro
 	deadline := time.Now().Add(e.Options.CloneTimeout)
 	lastContact := time.Now()
 	startingSince := time.Now()
+	stopping := false
 	for time.Now().Before(deadline) {
+		// A stop ends only this job's recorded clone process; the worker still
+		// publishes the exit code, so completion is observed as usual.
+		if j.stopRequested() && !stopping && e.Host.StopClone(ctx, index) == nil {
+			stopping = true
+			j.update(func(s *State) { s.Message = "Stopping the clone" })
+		}
 		status, err := e.Host.CloneStatus(ctx, index)
 		if err != nil {
 			if time.Since(lastContact) > e.Options.DisconnectTimeout {
@@ -262,6 +300,9 @@ func (e *Engine) waitClone(ctx context.Context, j *Job, index int, startErr erro
 			lastContact = time.Now()
 			j.update(func(s *State) { s.Phase = phaseCloning; s.Progress = status.Progress; s.TechnicalLog = status.Log })
 			if status.Done {
+				if j.stopRequested() {
+					return errStopped
+				}
 				if status.ExitCode != 0 {
 					return fmt.Errorf("vmkfstools clone exited with code %d; source registration is unchanged", status.ExitCode)
 				}
