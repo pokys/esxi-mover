@@ -12,6 +12,18 @@ import (
 	"esxi-mover/internal/vmx"
 )
 
+const (
+	modeCopy = "COPY"
+	modeMove = "MOVE"
+)
+
+// Results of a safety check. Any statusBlock makes a report not Ready.
+const (
+	statusOK      = "OK"
+	statusWarning = "WARNING"
+	statusBlock   = "BLOCK"
+)
+
 // Host is a narrow management boundary. There is intentionally no removal API.
 type Host interface {
 	Inventory(context.Context) (esxi.Inventory, error)
@@ -72,7 +84,7 @@ type Report struct {
 
 func (r *Report) check(name, status, detail string) {
 	r.Checks = append(r.Checks, Check{name, status, detail})
-	if status == "BLOCK" {
+	if status == statusBlock {
 		r.Ready = false
 	}
 }
@@ -90,10 +102,16 @@ type Options struct {
 }
 
 func DefaultOptions() Options {
-	return Options{5 * time.Minute, 3 * time.Second, 5 * time.Minute, 7 * 24 * time.Hour, 2 * time.Minute, ""}
+	return Options{
+		ShutdownTimeout:   5 * time.Minute,
+		PollInterval:      3 * time.Second,
+		DisconnectTimeout: 5 * time.Minute,
+		CloneTimeout:      7 * 24 * time.Hour,
+		PowerOnTimeout:    2 * time.Minute,
+	}
 }
 func validateRequest(r Request) error {
-	if r.VMID <= 0 || r.TargetUUID == "" || (r.Mode != "COPY" && r.Mode != "MOVE") || (r.Mode == "COPY" && r.PowerOn) {
+	if r.VMID <= 0 || r.TargetUUID == "" || (r.Mode != modeCopy && r.Mode != modeMove) || (r.Mode == modeCopy && r.PowerOn) {
 		return fmt.Errorf("invalid migration options")
 	}
 	return nil
