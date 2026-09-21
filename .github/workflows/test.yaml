@@ -32,6 +32,8 @@ jobs:
         run: go vet ./...
       - name: Run tests with race detector
         run: go test -race -count=1 ./...
+      - name: Test browser request handling
+        run: node --test scripts/test-web.mjs
       - name: Check deployment configuration
         run: |
           sh -n start.sh

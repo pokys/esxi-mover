@@ -46,6 +46,7 @@ func verifyDisk(ctx context.Context, h Host, d Disk) error {
 	}
 	return nil
 }
+
 // diskNames maps each disk's VMX key to the file the target VMX must name:
 // the cloned base disk, or for a live cutover the copied snapshot delta.
 func diskNames(disks []Disk, deltas map[string]string) map[string]string {

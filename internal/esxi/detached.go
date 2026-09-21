@@ -56,6 +56,7 @@ func (c *Client) Finish(ctx context.Context, id string) error {
 	_, e = c.run(ctx, "archive-completed-operation", Argv("mv", activeDir, RuntimeDir+"/completed-"+id), nil)
 	return e
 }
+
 // TargetPath accepts a directory this tool may create and write into: a direct
 // child of a datastore volume, never the volume root and never a nested path.
 // The folder is named after the source VM, so its name carries no marker; that
@@ -105,6 +106,7 @@ func (c *Client) WriteTarget(ctx context.Context, dir, name string, data []byte)
 	_, e := c.run(ctx, "write-target-config", "umask 077; set -C; cat > "+Quote(path.Join(dir, name)), data)
 	return e
 }
+
 // StartClone launches one detached vmkfstools clone. With requireOff the worker
 // checks on ESXi, immediately before cloning, that the source is powered off.
 // A live migration clones the base disk behind the job's own snapshot while
@@ -136,6 +138,7 @@ func (c *Client) StartClone(ctx context.Context, id string, index, vmID int, sou
 	_, e = c.run(ctx, "start-detached-clone", script, nil)
 	return e
 }
+
 // StopClone ends a running clone at the operator's request. It signals only
 // the vmkfstools process the worker recorded, and nothing once the clone has
 // finished. The worker then publishes the exit code, so the outcome is

@@ -282,7 +282,12 @@ func (e *Engine) shutdown(ctx context.Context, j *Job, r Report, revalidate func
 
 // waitClone reports whether the worker's exit marker was observed, even for
 // a failed or stopped clone. A timeout or lost connection does not prove exit.
-func (e *Engine) waitClone(ctx context.Context, j *Job, index int, startErr error) (bool, error) {
+func (e *Engine) waitClone(ctx context.Context, j *Job, index int, startErr error) (exited bool, err error) {
+	defer func() {
+		if err != nil && !exited {
+			j.phase(phaseUnknown, "The clone may still be running on ESXi. Confirm its exit before changing files, merging snapshots or archiving the operation lock.")
+		}
+	}()
 	deadline := time.Now().Add(e.Options.CloneTimeout)
 	lastContact := time.Now()
 	startingSince := time.Now()

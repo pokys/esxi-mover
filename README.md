@@ -139,7 +139,8 @@ the snapshot and lock remain for manual review.
 - **Clone or verification fails:** the source stays registered and off; the
   target folder may be partial. Inspect it, but don't use it.
 - **SSH drops:** the clone keeps running on ESXi and is never started twice.
-  After five minutes without SSH the page reports an unknown outcome.
+  After five minutes without SSH the page shows **Outcome unknown**, with the
+  last reported progress. This does not mean the remote clone has stopped.
   For a live migration, confirm that the clone has ended before merging the
   temporary snapshot or archiving the operation lock.
 - **The appliance restarts:** the disk being cloned finishes on ESXi. The
