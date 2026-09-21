@@ -14,12 +14,14 @@ type Engine struct {
 	Options Options
 }
 
-func (e *Engine) analyzer() Analyzer { return Analyzer{e.Host, e.Options.ApplianceUUID} }
+func (e *Engine) analyzer() Analyzer {
+	return Analyzer{Host: e.Host, ApplianceUUID: e.Options.ApplianceUUID}
+}
 func (e *Engine) Run(ctx context.Context, j *Job) {
 	err := e.run(ctx, j)
 	if err != nil {
 		j.update(func(s *State) {
-			s.Phase = "failed"
+			s.Phase = phaseFailed
 			s.Error = err.Error()
 			s.Message = "Stopped. Source files are preserved. Review the exact registration state before taking action."
 			s.Complete = true
@@ -31,8 +33,8 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 	if !r.Ready {
 		return fmt.Errorf("analysis was blocked")
 	}
-	j.phase("preflight", "Repeating all critical safety checks")
-	fresh, err := e.analyzer().inspect(ctx, r.Request, r.ID, false, false, 0)
+	j.phase(phasePreflight, "Repeating all critical safety checks")
+	fresh, err := e.analyzer().inspect(ctx, r.Request, r.ID, progress{})
 	if err != nil {
 		return err
 	}
@@ -42,7 +44,7 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 	if err = e.Host.Acquire(ctx, r.ID, "source="+r.SourceVMX+"\ntarget="+r.TargetVMX+"\nmode="+r.Request.Mode+"\n"); err != nil {
 		return fmt.Errorf("cannot acquire host operation lock: %w", err)
 	}
-	fresh, err = e.analyzer().inspect(ctx, r.Request, r.ID, true, false, 0)
+	fresh, err = e.analyzer().inspect(ctx, r.Request, r.ID, progress{ownLock: true})
 	if err != nil {
 		return err
 	}
@@ -68,7 +70,7 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 			return err
 		}
 		j.update(func(s *State) {
-			s.Phase = "cloning"
+			s.Phase = phaseCloning
 			s.Message = "Cloning disk sequentially with vmkfstools"
 			s.DiskIndex = i + 1
 			s.CurrentDisk = d.Source
@@ -82,7 +84,7 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 		}
 		startErr := e.Host.StartClone(ctx, r.ID, i, r.VM.ID, d.Source, d.Target)
 		if startErr != nil {
-			j.phase("reconnecting", "Clone launch result is unknown; inspecting metadata without relaunching")
+			j.phase(phaseReconnecting, "Clone launch result is unknown; inspecting metadata without relaunching")
 		}
 		if err = e.waitClone(ctx, j, i, startErr); err != nil {
 			return err
@@ -90,7 +92,7 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 		if err = e.requireOff(ctx, r.VM.ID); err != nil {
 			return err
 		}
-		j.phase("verifying_disk", "Verifying target descriptor, extent, capacity, thin format and chain")
+		j.phase(phaseVerifyingDisk, "Verifying target descriptor, extent, capacity, thin format and chain")
 		if err = verifyDisk(ctx, e.Host, d); err != nil {
 			return fmt.Errorf("target disk verification failed: %w", err)
 		}
@@ -99,7 +101,7 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 	if _, err = e.guard(ctx, r, true, consumed); err != nil {
 		return err
 	}
-	j.phase("verifying_config", "Copying only selected configuration files and verifying target VMX")
+	j.phase(phaseVerifyingConfig, "Copying only selected configuration files and verifying target VMX")
 	if err = copyConfig(ctx, e.Host, r); err != nil {
 		return err
 	}
@@ -113,7 +115,7 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 		return err
 	}
 	j.update(func(s *State) { s.TargetVerified = true })
-	if r.Request.Mode == "MOVE" {
+	if r.Request.Mode == modeMove {
 		if err = e.commit(ctx, j, r); err != nil {
 			return err
 		}
@@ -127,7 +129,7 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 		return fmt.Errorf("migration finished but transient lock archive failed; manual review required: %w", err)
 	}
 	j.update(func(s *State) {
-		s.Phase = "completed"
+		s.Phase = phaseCompleted
 		s.Message = "Completed. No source VM files were deleted."
 		s.Complete = true
 		s.CanRollback = false
@@ -139,7 +141,7 @@ func matchPlan(before, after Report) error {
 	if !after.Ready {
 		parts := []string{}
 		for _, c := range after.Checks {
-			if c.Status == "BLOCK" {
+			if c.Status == statusBlock {
 				parts = append(parts, c.Name+": "+c.Detail)
 			}
 		}
@@ -151,7 +153,7 @@ func matchPlan(before, after Report) error {
 	return nil
 }
 func (e *Engine) guard(ctx context.Context, r Report, created bool, consumed int64) (Report, error) {
-	fresh, err := e.analyzer().inspect(ctx, r.Request, r.ID, true, created, consumed)
+	fresh, err := e.analyzer().inspect(ctx, r.Request, r.ID, progress{ownLock: true, targetCreated: created, consumed: consumed})
 	if err != nil {
 		return fresh, err
 	}
@@ -198,7 +200,7 @@ func (e *Engine) shutdown(ctx context.Context, j *Job, r Report) error {
 	if r.Power != esxi.On {
 		return fmt.Errorf("unsupported source power state")
 	}
-	j.phase("shutdown", "Requesting a graceful guest shutdown")
+	j.phase(phaseShutdown, "Requesting a graceful guest shutdown")
 	shutdownErr := e.Host.Shutdown(ctx, r.VM.ID)
 	deadline := time.Now().Add(e.Options.ShutdownTimeout)
 	if shutdownErr != nil {
@@ -217,14 +219,14 @@ func (e *Engine) shutdown(ctx context.Context, j *Job, r Report) error {
 			return fmt.Errorf("unexpected power state during shutdown")
 		}
 		if time.Now().After(deadline) {
-			j.phase("awaiting_shutdown", "Graceful shutdown failed or VMware Tools is unavailable. Wait, shut down manually, or explicitly confirm Force Power Off.")
+			j.phase(phaseAwaitingShutdown, "Graceful shutdown failed or VMware Tools is unavailable. Wait, shut down manually, or explicitly confirm Force Power Off.")
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case action := <-j.actions:
 				if action == "force" {
 					// Revalidate identity and snapshot state before honoring the queued action.
-					fresh, err := e.analyzer().inspect(ctx, r.Request, r.ID, true, false, 0)
+					fresh, err := e.analyzer().inspect(ctx, r.Request, r.ID, progress{ownLock: true})
 					if err != nil {
 						return err
 					}
@@ -236,7 +238,7 @@ func (e *Engine) shutdown(ctx context.Context, j *Job, r Report) error {
 					}
 				}
 				deadline = time.Now().Add(e.Options.ShutdownTimeout)
-				j.phase("shutdown", "Waiting for confirmed Powered off state")
+				j.phase(phaseShutdown, "Waiting for confirmed Powered off state")
 			}
 		}
 		if err = pause(ctx, e.Options.PollInterval); err != nil {
@@ -254,10 +256,10 @@ func (e *Engine) waitClone(ctx context.Context, j *Job, index int, startErr erro
 			if time.Since(lastContact) > e.Options.DisconnectTimeout {
 				return fmt.Errorf("cannot determine remote clone outcome; it may still be running; inspect ESXi transient metadata: %w", err)
 			}
-			j.phase("reconnecting", "SSH unavailable or remote process state uncertain; clone will never be relaunched automatically")
+			j.phase(phaseReconnecting, "SSH unavailable or remote process state uncertain; clone will never be relaunched automatically")
 		} else {
 			lastContact = time.Now()
-			j.update(func(s *State) { s.Phase = "cloning"; s.Progress = status.Progress; s.TechnicalLog = status.Log })
+			j.update(func(s *State) { s.Phase = phaseCloning; s.Progress = status.Progress; s.TechnicalLog = status.Log })
 			if status.Done {
 				if status.ExitCode != 0 {
 					return fmt.Errorf("vmkfstools clone exited with code %d; source registration is unchanged", status.ExitCode)
@@ -326,7 +328,7 @@ func (e *Engine) commit(ctx context.Context, j *Job, r Report) error {
 	if err = e.requireOff(ctx, src); err != nil {
 		return err
 	}
-	j.phase("commit", "Target complete and verified. Switching VM registration; source files remain in place.")
+	j.phase(phaseCommit, "Target complete and verified. Switching VM registration; source files remain in place.")
 	j.update(func(s *State) { s.SourceRegistration = "unknown" })
 	unregisterErr := e.Host.Unregister(ctx, src)
 	src, dst, err = e.registrations(ctx, r.SourceVMX, r.TargetVMX)
@@ -388,7 +390,7 @@ func (e *Engine) powerOn(ctx context.Context, j *Job) error {
 	if err != nil || src != 0 || dst != s.TargetVMID {
 		return fmt.Errorf("cannot confirm source unregistered and target identity before Power On")
 	}
-	j.phase("power_on", "Requesting target Power On; source remains unregistered")
+	j.phase(phasePowerOn, "Requesting target Power On; source remains unregistered")
 	// Some ESXi builds keep this command pending while a VM question is open.
 	// Bound the command and inspect actual state/questions even if its reply is lost.
 	powerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -438,7 +440,7 @@ func (e *Engine) powerOn(ctx context.Context, j *Job) error {
 // powers either VM on, and refuses to unregister a running/unknown target.
 func (e *Engine) Rollback(ctx context.Context, j *Job) error {
 	s := j.Snapshot()
-	if !s.Complete || !s.CanRollback || s.Phase != "failed" {
+	if !s.Complete || !s.CanRollback || s.Phase != phaseFailed {
 		return fmt.Errorf("registration rollback is unavailable")
 	}
 	r := j.plan
@@ -480,7 +482,7 @@ func (e *Engine) Rollback(ctx context.Context, j *Job) error {
 		return err
 	}
 	j.update(func(s *State) {
-		s.Phase = "rolled_back"
+		s.Phase = phaseRolledBack
 		s.Error = ""
 		s.Message = "Source registration restored. Both copies remain off; all files are preserved."
 	})

@@ -23,8 +23,25 @@ type Job struct {
 	actions chan string
 }
 
+// Job phases, as the web UI receives them.
+const (
+	phaseQueued           = "queued"
+	phasePreflight        = "preflight"
+	phaseShutdown         = "shutdown"
+	phaseAwaitingShutdown = "awaiting_shutdown"
+	phaseCloning          = "cloning"
+	phaseReconnecting     = "reconnecting"
+	phaseVerifyingDisk    = "verifying_disk"
+	phaseVerifyingConfig  = "verifying_config"
+	phaseCommit           = "commit"
+	phasePowerOn          = "power_on"
+	phaseCompleted        = "completed"
+	phaseFailed           = "failed"
+	phaseRolledBack       = "rolled_back"
+)
+
 func NewJob(r Report) *Job {
-	return &Job{state: State{ID: r.ID, Phase: "queued", Mode: r.Request.Mode, Message: "Waiting for final preflight", Started: time.Now(), Updated: time.Now(), DiskCount: len(r.Disks), SourceFilesPreserved: true, SourceRegistration: "registered", TargetRegistration: "not registered", SourcePower: string(r.Power), TargetPower: "not running (unregistered)", SourceVMX: r.SourceVMX, TargetVMX: r.TargetVMX}, plan: r, actions: make(chan string, 1)}
+	return &Job{state: State{ID: r.ID, Phase: phaseQueued, Mode: r.Request.Mode, Message: "Waiting for final preflight", Started: time.Now(), Updated: time.Now(), DiskCount: len(r.Disks), SourceFilesPreserved: true, SourceRegistration: "registered", TargetRegistration: "not registered", SourcePower: string(r.Power), TargetPower: "not running (unregistered)", SourceVMX: r.SourceVMX, TargetVMX: r.TargetVMX}, plan: r, actions: make(chan string, 1)}
 }
 func (j *Job) Snapshot() State { j.mu.Lock(); defer j.mu.Unlock(); return j.state }
 func (j *Job) update(fn func(*State)) {
@@ -35,7 +52,7 @@ func (j *Job) update(fn func(*State)) {
 }
 func (j *Job) phase(p, m string) { j.update(func(s *State) { s.Phase = p; s.Message = m }) }
 func (j *Job) Control(action string, confirmed bool) error {
-	if j.Snapshot().Phase != "awaiting_shutdown" {
+	if j.Snapshot().Phase != phaseAwaitingShutdown {
 		return fmt.Errorf("job is not waiting for shutdown")
 	}
 	if action != "wait" && action != "manual" && action != "force" {

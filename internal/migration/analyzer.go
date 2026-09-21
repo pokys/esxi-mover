@@ -20,8 +20,16 @@ type Analyzer struct {
 	ApplianceUUID string
 }
 
+// progress is what a running job has already done on the host, so that the
+// repeated preflight does not block on the job's own lock, folder or writes.
+type progress struct {
+	ownLock       bool  // the host operation lock belongs to this job
+	targetCreated bool  // the target folder was created by this job
+	consumed      int64 // target space this job's clones have already taken
+}
+
 func (a Analyzer) Analyze(ctx context.Context, req Request) (Report, error) {
-	return a.inspect(ctx, req, NewID(), false, false, 0)
+	return a.inspect(ctx, req, NewID(), progress{})
 }
 func reserve(bytes int64) (int64, error) {
 	if bytes < 0 || bytes > (math.MaxInt64-(1<<30))/115*100 {
@@ -29,7 +37,7 @@ func reserve(bytes int64) (int64, error) {
 	}
 	return bytes + bytes/100*15 + (1 << 30), nil
 }
-func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, targetCreated bool, consumed int64) (Report, error) {
+func (a Analyzer) inspect(ctx context.Context, req Request, id string, done progress) (Report, error) {
 	r := Report{ID: id, Request: req, Ready: true}
 	if e := validateRequest(req); e != nil {
 		return r, e
@@ -39,10 +47,10 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 		return r, e
 	}
 	if !inv.Capabilities.Supported {
-		r.check("ESXi version", "BLOCK", "Only recognized ESXi 6.5, 6.7, 7.x and 8.x versions are supported")
+		r.check("ESXi version", statusBlock, "Only recognized ESXi 6.5, 6.7, 7.x and 8.x versions are supported")
 	}
-	if inv.ExistingOperation != "" && !ownLock {
-		r.check("Existing operation", "BLOCK", inv.ExistingOperation)
+	if inv.ExistingOperation != "" && !done.ownLock {
+		r.check("Existing operation", statusBlock, inv.ExistingOperation)
 	}
 	found := false
 	for _, v := range inv.VMs {
@@ -61,7 +69,7 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 		}
 	}
 	if !target.Mounted || !esxi.SupportedVMFS(target.Type) {
-		r.check("Target datastore", "BLOCK", "Target must be a mounted VMFS-5 or VMFS-6 datastore")
+		r.check("Target datastore", statusBlock, "Target must be a mounted VMFS-5 or VMFS-6 datastore")
 		return r, nil
 	}
 	p, e := esxi.ResolveReference(r.VM.VMXPath, "", inv.Datastores)
@@ -81,10 +89,10 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 	}
 	r.SourceDatastore = source.Name
 	if !source.Mounted || !esxi.SupportedVMFS(source.Type) {
-		r.check("Source datastore", "BLOCK", "Source must be a mounted VMFS-5 or VMFS-6 datastore")
+		r.check("Source datastore", statusBlock, "Source must be a mounted VMFS-5 or VMFS-6 datastore")
 	}
 	if source.UUID == target.UUID {
-		r.check("Target datastore", "BLOCK", "Select a different datastore")
+		r.check("Target datastore", statusBlock, "Select a different datastore")
 	}
 	targetMount, e := a.Host.Canonical(ctx, path.Join("/vmfs/volumes", target.UUID))
 	if e != nil {
@@ -107,25 +115,25 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 	r.TargetVMX = path.Join(r.TargetDir, path.Base(r.SourceVMX))
 	r.TargetFree = target.Free
 	if !esxi.TargetPath(r.TargetDir) {
-		r.check("Target directory", "BLOCK", "The target folder must be a direct child of the target datastore")
+		r.check("Target directory", statusBlock, "The target folder must be a direct child of the target datastore")
 	}
 	exists, e := a.Host.Exists(ctx, r.TargetDir)
 	if e != nil {
 		return r, e
 	}
-	if exists && !targetCreated {
+	if exists && !done.targetCreated {
 		detail := folder + " already exists on the target datastore and is never overwritten."
 		if free, e := a.freeFolder(ctx, targetMount, folder); e == nil && free != "" {
 			detail += " " + free + " is free; enter it as the target folder."
 		}
-		r.check("Target directory", "BLOCK", detail)
+		r.check("Target directory", statusBlock, detail)
 	}
 	r.Power, e = a.Host.Power(ctx, req.VMID)
 	if e != nil {
 		return r, e
 	}
 	if r.Power == esxi.Suspended {
-		r.check("Power state", "BLOCK", "Suspended VM is unsupported")
+		r.check("Power state", statusBlock, "Suspended VM is unsupported")
 	}
 	raw, e := a.Host.ReadFile(ctx, r.SourceVMX)
 	if e != nil {
@@ -137,28 +145,28 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 	}
 	configAnalysis := vmx.Analyze(r.Config)
 	for _, b := range configAnalysis.Blocks {
-		r.check("VM configuration", "BLOCK", b)
+		r.check("VM configuration", statusBlock, b)
 	}
 	if a.ApplianceUUID != "" && sameUUID(r.Config["uuid.bios"], a.ApplianceUUID) {
-		r.check("Mover appliance", "BLOCK", "Migrating the ESXi Mover appliance itself is unsupported")
+		r.check("Mover appliance", statusBlock, "Migrating the ESXi Mover appliance itself is unsupported")
 	}
 	snap, e := a.Host.Snapshot(ctx, req.VMID)
 	if e != nil {
 		return r, e
 	}
 	if e = SnapshotManager(snap); e != nil {
-		r.check("Snapshot Manager", "BLOCK", e.Error())
+		r.check("Snapshot Manager", statusBlock, e.Error())
 	} else {
-		r.check("Snapshot Manager", "OK", "No snapshot tree reported")
+		r.check("Snapshot Manager", statusOK, "No snapshot tree reported")
 	}
 	files, e := a.Host.List(ctx, r.SourceDir)
 	if e != nil {
 		return r, e
 	}
 	if e = SnapshotFiles(files); e != nil {
-		r.check("Snapshot artifacts", "BLOCK", e.Error())
+		r.check("Snapshot artifacts", statusBlock, e.Error())
 	} else {
-		r.check("Snapshot artifacts", "OK", "No delta, seSparse, numbered snapshot or suspend files")
+		r.check("Snapshot artifacts", statusOK, "No delta, seSparse, numbered snapshot or suspend files")
 	}
 	for _, f := range files {
 		if strings.EqualFold(path.Ext(f), ".vmsd") {
@@ -167,9 +175,9 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 				return r, e
 			}
 			if e = VMSD(s); e != nil {
-				r.check("VMSD metadata", "BLOCK", e.Error())
+				r.check("VMSD metadata", statusBlock, e.Error())
 			} else {
-				r.check("VMSD metadata", "OK", "Empty snapshot metadata")
+				r.check("VMSD metadata", statusOK, "Empty snapshot metadata")
 			}
 		}
 	}
@@ -180,49 +188,49 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 	for _, ref := range configAnalysis.Disks {
 		src, e := a.localFile(ctx, ref.File, r.SourceDir, inv.Datastores)
 		if e != nil {
-			r.check("VMDK location", "BLOCK", e.Error())
+			r.check("VMDK location", statusBlock, e.Error())
 			continue
 		}
 		if backings[src] {
-			r.check("Shared VMDK", "BLOCK", "Multiple devices reference the same disk")
+			r.check("Shared VMDK", statusBlock, "Multiple devices reference the same disk")
 		}
 		backings[src] = true
 		name := path.Base(src)
 		extentName := strings.TrimSuffix(name, path.Ext(name)) + "-flat.vmdk"
 		if destNames[name] || destNames[extentName] {
-			r.check("Target filename", "BLOCK", "Target filename collision")
+			r.check("Target filename", statusBlock, "Target filename collision")
 		}
 		destNames[name] = true
 		destNames[extentName] = true
 		text, e := a.Host.ReadFile(ctx, src)
 		if e != nil {
-			r.check("VMDK descriptor", "BLOCK", "Unreadable descriptor")
+			r.check("VMDK descriptor", statusBlock, "Unreadable descriptor")
 			continue
 		}
 		desc, e := vmdk.Parse(text)
 		if e != nil {
-			r.check("VMDK descriptor", "BLOCK", e.Error())
+			r.check("VMDK descriptor", statusBlock, e.Error())
 			continue
 		}
 		if e = DiskSnapshot(src, desc); e != nil {
-			r.check("Active snapshot chain", "BLOCK", e.Error())
+			r.check("Active snapshot chain", statusBlock, e.Error())
 		}
 		if e = desc.Standalone(); e != nil {
-			r.check("VMDK format", "BLOCK", e.Error())
+			r.check("VMDK format", statusBlock, e.Error())
 			continue
 		}
 		extent, e := a.localFile(ctx, desc.Extents[0].File, r.SourceDir, inv.Datastores)
 		if e != nil {
-			r.check("Disk extent", "BLOCK", e.Error())
+			r.check("Disk extent", statusBlock, e.Error())
 			continue
 		}
 		if backings[extent] {
-			r.check("Shared extent", "BLOCK", "Multiple disks share the same extent")
+			r.check("Shared extent", statusBlock, "Multiple disks share the same extent")
 		}
 		backings[extent] = true
 		size, e := a.Host.Size(ctx, extent)
 		if e != nil || size != desc.Bytes {
-			r.check("Disk extent", "BLOCK", "Extent is missing or its logical capacity differs from the descriptor")
+			r.check("Disk extent", statusBlock, "Extent is missing or its logical capacity differs from the descriptor")
 		}
 		allocated, ae := a.Host.Allocated(ctx, extent)
 		known := ae == nil && allocated <= desc.Bytes && allocated >= 0
@@ -240,37 +248,37 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 		fingerprints = append(fingerprints, src+"\n"+text+"\n"+extent)
 		if r.Power == esxi.Off {
 			if e = a.Host.VerifyChain(ctx, src); e != nil {
-				r.check("Source disk chain", "BLOCK", e.Error())
+				r.check("Source disk chain", statusBlock, e.Error())
 			}
 		}
 	}
 	if len(r.Disks) == 0 {
-		r.check("Disks", "BLOCK", "No safe disks found")
+		r.check("Disks", statusBlock, "No safe disks found")
 	}
 	for _, key := range []string{"nvram", "extendedconfigfile"} {
 		if ref := r.Config[key]; ref != "" {
 			src, e := a.localFile(ctx, ref, r.SourceDir, inv.Datastores)
 			if e != nil {
-				r.check("Configuration files", "BLOCK", e.Error())
+				r.check("Configuration files", statusBlock, e.Error())
 				continue
 			}
 			ext := strings.ToLower(path.Ext(src))
 			if (key == "nvram" && ext != ".nvram") || (key == "extendedconfigfile" && ext != ".vmxf") {
-				r.check("Configuration files", "BLOCK", "Unexpected configuration file extension")
+				r.check("Configuration files", statusBlock, "Unexpected configuration file extension")
 				continue
 			}
 			if destNames[path.Base(src)] {
-				r.check("Configuration files", "BLOCK", "Target configuration name collision")
+				r.check("Configuration files", statusBlock, "Target configuration name collision")
 			}
 			destNames[path.Base(src)] = true
 			metadata, readErr := a.Host.ReadFile(ctx, src)
 			if readErr != nil {
-				r.check("Configuration files", "BLOCK", "Configuration file cannot be read")
+				r.check("Configuration files", statusBlock, "Configuration file cannot be read")
 				continue
 			}
 			if key == "extendedconfigfile" {
 				if err := vmx.ValidateVMXF(metadata, path.Base(r.SourceVMX)); err != nil {
-					r.check("VMXF metadata", "BLOCK", err.Error())
+					r.check("VMXF metadata", statusBlock, err.Error())
 					continue
 				}
 			}
@@ -282,11 +290,11 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 		if ref.Kind == "ISO" {
 			full, e := esxi.ResolveReference(ref.File, r.SourceDir, inv.Datastores)
 			if e != nil {
-				r.check("ISO reference", "BLOCK", e.Error())
+				r.check("ISO reference", statusBlock, e.Error())
 				continue
 			}
 			replacements[ref.Key] = full
-			r.check("External ISO", "WARNING", full+" remains on its existing datastore")
+			r.check("External ISO", statusWarning, full+" remains on its existing datastore")
 		}
 	}
 	// Unknown path-bearing keys could make the target write into the source.
@@ -298,14 +306,14 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 			switch k {
 			case "sched.swap.derivedname", "workingdir", "snapshot.directory", "checkpoint.vmstate", "migrate.hostlog", "log.filename":
 			default:
-				r.check("External configuration reference", "BLOCK", "Unclassified datastore path in "+k)
+				r.check("External configuration reference", statusBlock, "Unclassified datastore path in "+k)
 			}
 		}
 	}
 	if e = a.sharedCheck(ctx, inv, r.VM.ID, backings); e != nil {
-		r.check("Shared disk inventory", "BLOCK", e.Error())
+		r.check("Shared disk inventory", statusBlock, e.Error())
 	} else {
-		r.check("Shared disk inventory", "OK", "No other registered VM references the disk or extent")
+		r.check("Shared disk inventory", statusOK, "No other registered VM references the disk or extent")
 	}
 	r.TargetConfig, e = vmx.Rewrite(r.Config, replacements)
 	if e != nil {
@@ -314,7 +322,7 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 	// uuid.action = keep is VMware's own answer "I moved it": the host keeps
 	// the identity and never stops the power-on to ask. A COPY is left alone,
 	// because a copy run beside its original needs "I copied it".
-	if req.Mode == "MOVE" {
+	if req.Mode == modeMove {
 		r.TargetConfig["uuid.action"] = "keep"
 	}
 	stable := stableConfig(r.Config)
@@ -327,7 +335,7 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 	// is the honest requirement. Holding the full provisioned size is a
 	// separate concern: the disks can still grow after the move, so say so
 	// instead of refusing the migration outright.
-	remaining := r.Allocated - consumed
+	remaining := r.Allocated - done.consumed
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -335,7 +343,7 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 	if e != nil {
 		return r, e
 	}
-	grown := r.Provisioned - consumed
+	grown := r.Provisioned - done.consumed
 	if grown < 0 {
 		grown = 0
 	}
@@ -345,14 +353,14 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 	}
 	switch {
 	case r.TargetFree < r.Required:
-		r.check("Free space", "BLOCK", "Insufficient free space for allocated capacity + 15% + 1 GiB")
+		r.check("Free space", statusBlock, "Insufficient free space for allocated capacity + 15% + 1 GiB")
 	case r.TargetFree < full:
-		r.check("Free space", "WARNING", "Enough for the thin clone, but the target cannot hold these disks once they grow to their full provisioned size")
+		r.check("Free space", statusWarning, "Enough for the thin clone, but the target cannot hold these disks once they grow to their full provisioned size")
 	default:
-		r.check("Free space", "OK", "Reserved estimate uses allocated capacity + 15% + 1 GiB")
+		r.check("Free space", statusOK, "Reserved estimate uses allocated capacity + 15% + 1 GiB")
 	}
 	if r.Ready {
-		r.check("Migration", "OK", "Ready for a fresh preflight and cold migration")
+		r.check("Migration", statusOK, "Ready for a fresh preflight and cold migration")
 	}
 	return r, nil
 }
