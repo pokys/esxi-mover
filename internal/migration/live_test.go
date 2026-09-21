@@ -195,7 +195,7 @@ func TestLiveUnknownCloneKeepsSnapshotAndLock(t *testing.T) {
 			j := NewJob(r)
 			(&Engine{Host: h, Options: o}).Run(context.Background(), j)
 			s := j.Snapshot()
-			if s.Phase != phaseFailed || !strings.Contains(s.Error, "clone exit was not confirmed") {
+			if s.Phase != phaseUnknown || !strings.Contains(s.Error, "clone exit was not confirmed") {
 				t.Fatalf("unknown clone did not require review: %+v", s)
 			}
 			if !h.locked || h.snapshot == "Get Snapshot:\n" || hasEvent(h, "consolidate:") || hasEvent(h, "finish") {
@@ -231,7 +231,7 @@ func TestLiveCancellationKeepsUnconfirmedCloneSnapshot(t *testing.T) {
 	j := NewJob(r)
 	(&Engine{Host: h, Options: testOptions()}).Run(ctx, j)
 	s := j.Snapshot()
-	if s.Phase != phaseFailed || !h.locked || hasEvent(h.fakeHost, "consolidate:") || !strings.Contains(s.Error, "context canceled") {
+	if s.Phase != phaseUnknown || !h.locked || hasEvent(h.fakeHost, "consolidate:") || !strings.Contains(s.Error, "context canceled") {
 		t.Fatalf("cancellation lost clone protection: %+v %v", s, h.events)
 	}
 }
@@ -326,7 +326,7 @@ func TestLiveSpaceMonitoringStopsBeforeRestoring(t *testing.T) {
 				t.Fatalf("space guard did not stop the clone before cutover: %v", h.events)
 			}
 			if h.ignoreStop {
-				if s.Phase != phaseFailed || !h.locked || hasEvent(h.fakeHost, "consolidate:") {
+				if s.Phase != phaseUnknown || !h.locked || hasEvent(h.fakeHost, "consolidate:") {
 					t.Fatalf("an unconfirmed stop merged the snapshot: %+v %v", s, h.events)
 				}
 				return

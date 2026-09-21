@@ -997,3 +997,16 @@ func TestMoveTargetKeepsIdentityAndCopyDoesNot(t *testing.T) {
 		}
 	}
 }
+
+func TestColdCloneTimeoutReportsUnknownOutcome(t *testing.T) {
+	h := newFake(1)
+	h.cloneHangs = true
+	j := NewJob(analyze(t, h, modeCopy, false))
+	o := testOptions()
+	o.CloneTimeout = 5 * time.Millisecond
+	(&Engine{Host: h, Options: o}).Run(context.Background(), j)
+	s := j.Snapshot()
+	if s.Phase != phaseUnknown || !s.Complete || s.CanStop || !strings.Contains(s.Message, "may still be running") || !h.locked {
+		t.Fatalf("unknown clone was presented as stopped: %+v", s)
+	}
+}

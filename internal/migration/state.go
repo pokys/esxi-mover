@@ -42,6 +42,7 @@ const (
 	phasePowerOn          = "power_on"
 	phaseCompleted        = "completed"
 	phaseFailed           = "failed"
+	phaseUnknown          = "unknown"
 	phaseRolledBack       = "rolled_back"
 	phaseSnapshot         = "snapshot"
 	phaseCutover          = "cutover"

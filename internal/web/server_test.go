@@ -2,15 +2,23 @@ package web
 
 import (
 	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"esxi-mover/internal/esxi"
 	"esxi-mover/internal/migration"
+	"golang.org/x/crypto/ssh"
 )
 
 func request(h http.Handler, method, path, body, csrf string, cookie *http.Cookie) *httptest.ResponseRecorder {
@@ -163,4 +171,102 @@ func TestConcurrentSessionReads(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+type closingExecutor struct{ closed atomic.Int32 }
+
+func (e *closingExecutor) Run(context.Context, esxi.Command) (esxi.Result, error) {
+	return esxi.Result{}, nil
+}
+func (e *closingExecutor) Close() error { e.closed.Add(1); return nil }
+
+func TestExpiredSessionsCloseOnlyIdleConnections(t *testing.T) {
+	for _, trigger := range []string{"login", "request"} {
+		t.Run(trigger, func(t *testing.T) {
+			s := New("test-admin-token", migration.DefaultOptions())
+			idle, active := &closingExecutor{}, &closingExecutor{}
+			s.sessions["idle"] = &session{expires: time.Now().Add(-time.Hour), host: esxi.NewClient(idle)}
+			s.sessions["active"] = &session{expires: time.Now().Add(-time.Hour), host: esxi.NewClient(active), job: migration.NewJob(migration.Report{})}
+			h := s.Handler()
+			if trigger == "request" {
+				w := request(h, "GET", "/api/session", "", "", &http.Cookie{Name: "mover_session", Value: "idle"})
+				if w.Code != 401 || idle.closed.Load() != 1 {
+					t.Fatal("expired request retained its connection")
+				}
+			}
+			login(t, h)
+			if idle.closed.Load() != 1 || active.closed.Load() != 0 || s.sessions["active"] == nil || s.sessions["idle"] != nil {
+				t.Fatal("expiry failed to close exactly the idle connection")
+			}
+		})
+	}
+}
+
+func TestFailedInventoryClosesSSHConnection(t *testing.T) {
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &ssh.ServerConfig{NoClientAuth: true}
+	cfg.AddHostKey(signer)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	accepted := make(chan net.Conn, 1)
+	closed := make(chan struct{})
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		accepted <- conn
+		defer conn.Close()
+		defer close(closed)
+		server, channels, requests, err := ssh.NewServerConn(conn, cfg)
+		if err != nil {
+			return
+		}
+		defer server.Close()
+		go ssh.DiscardRequests(requests)
+		for channel := range channels {
+			ch, reqs, err := channel.Accept()
+			if err != nil {
+				return
+			}
+			for req := range reqs {
+				_ = req.Reply(true, nil)
+				_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
+				ch.Close()
+				break
+			}
+		}
+	}()
+	s := New("test-admin-token", migration.DefaultOptions())
+	h := s.Handler()
+	cookie, csrf := login(t, h)
+	fp := ssh.FingerprintSHA256(signer.PublicKey())
+	se := s.sessions[cookie.Value]
+	se.address, se.fingerprint, se.probeTime = ln.Addr().String(), fp, time.Now()
+	body, _ := json.Marshal(map[string]any{"Username": "fixture", "Password": "fixture", "Fingerprint": fp, "Confirmed": true})
+	w := request(h, "POST", "/api/connect", string(body), csrf, cookie)
+	select {
+	case conn := <-accepted:
+		defer conn.Close()
+	case <-time.After(time.Second):
+		t.Fatal("SSH connection was not attempted")
+	}
+	if w.Code != 400 || se.host != nil {
+		t.Fatal("failed inventory was accepted")
+	}
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("failed inventory left SSH connected")
+	}
 }

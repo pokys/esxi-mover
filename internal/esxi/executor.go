@@ -28,7 +28,7 @@ type Event struct {
 	DurationMS int64
 	ExitCode   int
 	Error      string
-	// Runs counts identical consecutive commands folded into this event.
+	// Runs counts matching commands folded into this event.
 	Runs int
 }
 type Audit struct {
@@ -39,14 +39,18 @@ type Audit struct {
 func (a *Audit) Add(e Event) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	// Polling a clone repeats one command every few seconds. Folding repeats
-	// keeps a long clone from pushing everything before it out of the log.
-	if n := len(a.events); n > 0 {
-		last := &a.events[n-1]
+	// Live clones alternate status and space checks. Fold successful polls
+	// within that stretch, but never across an error or a management command.
+	for i := len(a.events) - 1; i >= 0; i-- {
+		last := a.events[i]
 		if last.Category == e.Category && last.Command == e.Command && last.ExitCode == e.ExitCode && last.Error == e.Error {
-			last.Time, last.DurationMS = e.Time, e.DurationMS
-			last.Runs++
+			e.Runs = last.Runs + 1
+			copy(a.events[i:], a.events[i+1:])
+			a.events[len(a.events)-1] = e
 			return
+		}
+		if !pollEvent(e) || !pollEvent(last) {
+			break
 		}
 	}
 	e.Runs = 1
@@ -54,6 +58,10 @@ func (a *Audit) Add(e Event) {
 	if len(a.events) > 500 {
 		a.events = append([]Event(nil), a.events[len(a.events)-500:]...)
 	}
+}
+
+func pollEvent(e Event) bool {
+	return e.Error == "" && e.ExitCode == 0 && (e.Category == "poll-detached-clone" || e.Category == "datastores")
 }
 func (a *Audit) Events() []Event {
 	a.mu.Lock()
@@ -77,6 +85,13 @@ type Client struct {
 }
 
 func NewClient(e Executor) *Client { return &Client{Exec: e, Audit: &Audit{}} }
+
+func (c *Client) Close() error {
+	if closer, ok := c.Exec.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
+}
 func (c *Client) Redact(s string) string {
 	if redactor, ok := c.Exec.(interface{ Redact(string) string }); ok {
 		return redactor.Redact(s)

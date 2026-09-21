@@ -62,9 +62,11 @@ type delta struct{ descriptor, extent string }
 
 func markFailed(j *Job, err error) {
 	j.update(func(s *State) {
-		s.Phase = phaseFailed
+		if s.Phase != phaseUnknown {
+			s.Phase = phaseFailed
+			s.Message = "Stopped. Source files are preserved. Review the exact registration state before taking action."
+		}
 		s.Error = err.Error()
-		s.Message = "Stopped. Source files are preserved. Review the exact registration state before taking action."
 		s.Complete = true
 	})
 }

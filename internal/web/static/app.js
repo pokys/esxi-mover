@@ -1,13 +1,39 @@
 'use strict';
 const $ = id => document.getElementById(id);
-let csrf = '', fingerprint = '', report = null, pollTimer = null, stores = {};
+let csrf = '', fingerprint = '', report = null, pollTimer = null, stores = {}, busy = false;
 const show = (id, visible = true) => { $(id).hidden = !visible; };
 function error(message) { $('error').textContent = message; show('error', Boolean(message)); if(message) $('error').scrollIntoView({behavior:'smooth',block:'center'}); }
 async function api(path, body) {
  const response = await fetch('/api/' + path, {method: body === undefined ? 'GET' : 'POST', headers: body === undefined ? {} : {'Content-Type':'application/json','X-CSRF-Token':csrf}, body: body === undefined ? undefined : JSON.stringify(body)});
- const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Request failed'); return data;
+ const data = await response.json();
+ if (!response.ok) {
+  const failure = new Error(data.error || 'Request failed');
+  failure.status = response.status;
+  throw failure;
+ }
+ return data;
 }
-async function action(fn, doing) { error(''); $('busyText').textContent=doing||'Working'; show('busy'); try { await fn(); } catch(e) { error(e.message); } finally { show('busy', false); refreshAudit(); } }
+function updateStart() {
+ $('start').disabled = busy || !(report && report.Ready && $('maintenance').checked);
+}
+async function action(fn, doing) {
+ if (busy) return;
+ busy = true;
+ const controls = [...document.querySelectorAll('main button, main input, main select, main textarea')].map(el => [el, el.disabled]);
+ controls.forEach(([el]) => { el.disabled = true; });
+ error('');
+ $('busyText').textContent = doing || 'Working';
+ show('busy');
+ try { await fn(); }
+ catch(e) { error(e.message); }
+ finally {
+  controls.forEach(([el, disabled]) => { el.disabled = disabled; });
+  busy = false;
+  updateStart();
+  show('busy', false);
+  refreshAudit();
+ }
+}
 async function refreshAudit(){ if(!$('auditBox').open) return; try{ const events=await api('log'); $('technical').textContent=(events||[]).map(e=>`${e.Time}  ${e.Category}  exit=${e.ExitCode}  ${e.DurationMS} ms${e.Runs>1?'  ×'+e.Runs:''}${e.Error?'  ERROR: '+e.Error:''}\n    ${e.Command||''}`).join('\n'); $('technical').scrollTop=$('technical').scrollHeight; }catch{} }
 function size(n) { return (n / 1073741824).toLocaleString(undefined,{maximumFractionDigits:2}) + ' GiB'; }
 function text(tag, value, className) { const el=document.createElement(tag); el.textContent=value; if(className) el.className=className; return el; }
@@ -52,8 +78,39 @@ function renderReport(d){
  $('disks').replaceChildren();(d.Disks||[]).forEach(disk=>{const el=text('div',base(disk.Source),'disk');el.append(text('small',size(disk.Provisioned)+' provisioned · '+(disk.AllocationKnown?size(disk.Allocated)+' used':'usage unknown, counting provisioned')+' · '+(disk.Thin?'thin':'thick')+' → thin'));$('disks').append(el);});
  $('destination').textContent=d.SourceDir+'  →  '+d.TargetDir;
 }
-$('maintenance').addEventListener('change',()=>{$('start').disabled=!(report&&report.Ready&&$('maintenance').checked);});
-$('start').addEventListener('click',()=>action(async()=>{$('start').disabled=true;const d=await api('start',{AnalysisID:report.ID,MaintenanceConfirmed:$('maintenance').checked});show('analysis',false);show('selection',false);renderJob(d);poll();},'Starting the migration'));
+$('maintenance').addEventListener('change', updateStart);
+function showJob(j) {
+ report = null;
+ show('analysis', false);
+ show('selection', false);
+ show('connect', false);
+ show('audit');
+ clearTimeout(pollTimer);
+ renderJob(j);
+ if (!j.Complete) poll();
+}
+async function startMigration() {
+ if (!report || !report.Ready || !$('maintenance').checked) return;
+ const id = report.ID;
+ try {
+  showJob(await api('start', {AnalysisID:id, MaintenanceConfirmed:true}));
+ } catch(failure) {
+  // A lost HTTP reply can still mean the job started. Reconcile by ID;
+  // never automatically repeat the POST.
+  try {
+   const j = await api('job');
+   if (j.ID === id) { showJob(j); return; }
+  } catch(check) {
+   if (check.status !== 404 && (!failure.status || failure.status >= 500)) {
+    report = null;
+    throw new Error('Could not confirm whether the migration started. Reload this page to check its status before starting another migration.');
+   }
+  }
+  if (failure.status === 409) report = null;
+  throw failure;
+ }
+}
+$('start').addEventListener('click', () => action(startMigration, 'Starting the migration'));
 function rate(j){
  if(j.Complete||j.Phase!=='cloning'||!j.DiskStarted||j.Progress<=0) return '';
  const secs=(Date.now()-new Date(j.DiskStarted))/1000;
@@ -63,9 +120,37 @@ function rate(j){
  if(j.DiskBytes>0) out+=' · '+Math.round(j.DiskBytes*j.Progress/100/secs/1048576)+' MiB/s';
  return out;
 }
-const outcome={completed:'ok',rolled_back:'warn',stopped:'warn',failed:'fail',awaiting_shutdown:'warn'};
+const outcome={completed:'ok',rolled_back:'warn',stopped:'warn',failed:'fail',unknown:'warn',awaiting_shutdown:'warn'};
 let live=false;
-function renderJob(j) {$('job').dataset.state=j.Phase==='completed'&&j.Error?'warn':outcome[j.Phase]||(j.Complete?'fail':'running');show('nextAction',j.Complete);show('job');$('jobTitle').textContent=j.Complete?(j.Phase==='completed'?'Migration completed':j.Phase==='rolled_back'?(j.Live?'Nothing changed: source restored':'Registration restored'):'Migration stopped'):'Migration in progress';$('phase').textContent=j.Phase.replaceAll('_',' ');$('jobMessage').textContent=j.Message;show('jobError',Boolean(j.Error));$('jobError').textContent=j.Error;$('currentDisk').textContent=j.CurrentDisk?`Disk ${j.DiskIndex} of ${j.DiskCount} · ${j.CurrentDisk}`:'';if(j.Complete||j.Phase==='cloning'){$('progress').value=j.Progress;$('percent').textContent=j.Progress+'%';}else{$('progress').removeAttribute('value');$('percent').textContent='working';}$('elapsed').textContent='Elapsed '+Math.floor(((j.Complete?new Date(j.Updated):Date.now())-new Date(j.Started))/1000)+' s'+rate(j);show('shutdownActions',j.Phase==='awaiting_shutdown');show('stop',j.CanStop);live=j.Live;show('rollback',j.Complete&&j.CanRollback);metrics('result',[['Source registration',j.SourceRegistration],['Source power',j.SourcePower],['Target registration',j.TargetRegistration],['Target power',j.TargetPower],['Target verified',j.TargetVerified?'Yes':'Not yet'],['Source files','Preserved']]);$('jobPaths').textContent='Source: '+j.SourceVMX+'\nTarget: '+j.TargetVMX;$('cloneLog').textContent=j.TechnicalLog||'';return j;}
+function renderJob(j) {
+ const unknown = j.Phase === 'unknown';
+ const titles = {completed:'Migration completed', failed:'Migration failed', stopped:'Migration stopped', unknown:'Outcome unknown', rolled_back:j.Live?'Source restored':'Registration restored'};
+ $('job').dataset.state = j.Phase === 'completed' && j.Error ? 'warn' : outcome[j.Phase] || (j.Complete ? 'fail' : 'running');
+ show('nextAction', j.Complete);
+ show('job');
+ $('jobTitle').textContent = titles[j.Phase] || 'Migration in progress';
+ $('phase').textContent = j.Phase.replaceAll('_', ' ');
+ $('jobMessage').textContent = j.Message;
+ show('jobError', Boolean(j.Error));
+ $('jobError').textContent = j.Error;
+ $('currentDisk').textContent = j.CurrentDisk ? `Disk ${j.DiskIndex} of ${j.DiskCount} · ${j.CurrentDisk}` : '';
+ if (j.Complete || j.Phase === 'cloning' || unknown) {
+  $('progress').value = j.Progress;
+  $('percent').textContent = j.Progress + (unknown ? '% last reported' : '%');
+ } else {
+  $('progress').removeAttribute('value');
+  $('percent').textContent = 'working';
+ }
+ $('elapsed').textContent = 'Elapsed ' + Math.floor(((j.Complete ? new Date(j.Updated) : Date.now()) - new Date(j.Started)) / 1000) + ' s' + rate(j);
+ show('shutdownActions', j.Phase === 'awaiting_shutdown');
+ show('stop', j.CanStop);
+ live = j.Live;
+ show('rollback', j.Complete && j.CanRollback);
+ metrics('result', [['Source registration',j.SourceRegistration], ['Source power',j.SourcePower], ['Target registration',j.TargetRegistration], ['Target power',j.TargetPower], ['Target verified',j.TargetVerified?'Yes':'Not yet'], ['Source files','Preserved']]);
+ $('jobPaths').textContent = 'Source: ' + j.SourceVMX + '\nTarget: ' + j.TargetVMX;
+ $('cloneLog').textContent = j.TechnicalLog || '';
+ return j;
+}
 function poll(){clearTimeout(pollTimer);pollTimer=setTimeout(async()=>{try{const j=renderJob(await api('job'));refreshAudit();if(!j.Complete)poll();}catch(e){error(e.message+' — the ESXi clone may continue.');poll();}},2000);}
 for(const id of ['wait','manual','force'])$(id).addEventListener('click',()=>action(async()=>{if(id==='force'&&!confirm('Force Power Off is equivalent to cutting power and may lose guest data. Explicitly confirm force shutdown of the selected source VM.'))return;await api('control',{Action:id,ForceConfirmed:id==='force'});},'Sending the request to ESXi'));
 $('rollback').addEventListener('click',()=>action(async()=>{if(!confirm('Restore source registration? The target must be powered off. Both copies and all files will remain, and neither VM will be powered on.'))return;renderJob(await api('rollback',{Confirmed:true}));},'Restoring the source registration'));
@@ -82,7 +167,21 @@ $('copyLog').addEventListener('click',async()=>{
  catch{getSelection().selectAllChildren($('technical'));b.textContent='Press Ctrl+C';}
  setTimeout(()=>{b.textContent='Copy';},2000);
 });
-(async()=>{try{const d=await api('session');csrf=d.csrf;show('login',false);show('connect');if(d.connected)connected(d.address);if(d.hasJob){show('connect',false);show('audit');renderJob(await api('job'));poll();}}catch{}})();
+action(async () => {
+ try {
+  const d = await api('session');
+  csrf = d.csrf;
+  show('login', false);
+  show('connect');
+  if (d.connected) connected(d.address);
+  if (d.hasJob) {
+   show('connect', false);
+   showJob(await api('job'));
+  }
+ } catch(e) {
+  if (e.status !== 401) throw e;
+ }
+}, 'Restoring session');
 
 function connected(host){$('statusText').textContent=host;show('status');}
 $('change').addEventListener('click',()=>{report=null;show('selection',false);show('analysis',false);show('connect');error('');});

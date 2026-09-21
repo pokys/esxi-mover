@@ -7,6 +7,7 @@ Every push runs, on a GitHub Linux runner:
 ```sh
 go vet ./...
 go test -race -count=1 ./...
+node --test scripts/test-web.mjs # browser state with simulated DOM and fetch
 python3 scripts/test-start.py   # start.sh against fake docker and rc-service
 docker compose config --quiet
 docker build .                  # also runs the test suite inside the build
@@ -34,6 +35,10 @@ and a real POSIX shell for quoting and the detached clone worker. They cover:
   (including a retried connection), and
   credentials never appearing in errors or the audit log.
 - **Web:** token, cookies, CSRF, Origin checks, request limits, login throttling.
+  Expired idle sessions and failed inventory reads close their SSH connections.
+  Browser tests cover rejected/lost start replies, locked analysis inputs,
+  page restoration and the distinct unknown-outcome display. Alternating clone
+  and space polls retain the earlier audit events.
 
 ## Verified on a real host
 

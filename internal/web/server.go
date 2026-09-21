@@ -133,6 +133,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	for id, se := range s.sessions {
 		se.mu.Lock()
 		expired := time.Now().After(se.expires) && (se.job == nil || se.job.Snapshot().Complete)
+		if expired {
+			se.closeHost()
+		}
 		se.mu.Unlock()
 		if expired {
 			delete(s.sessions, id)
@@ -168,6 +171,9 @@ func (s *Server) auth(next func(http.ResponseWriter, *http.Request, *session)) h
 		}
 		valid := time.Now().Before(se.expires)
 		csrf := se.csrf
+		if !valid {
+			se.closeHost()
+		}
 		se.mu.Unlock()
 		if !valid {
 			problem(w, 401, "Session expired")
@@ -184,6 +190,15 @@ func (s *Server) sessionInfo(w http.ResponseWriter, r *http.Request, se *session
 	se.mu.Lock()
 	defer se.mu.Unlock()
 	respond(w, 200, map[string]any{"csrf": se.csrf, "connected": se.host != nil, "hasJob": se.job != nil, "address": se.address})
+}
+
+// The caller holds se.mu. Active jobs are never expired or replaced.
+func (se *session) closeHost() {
+	if se.host != nil {
+		_ = se.host.Close()
+		se.host = nil
+	}
+	se.report = nil
 }
 func (s *Server) begin(w http.ResponseWriter) bool {
 	if !s.op.TryLock() {
@@ -263,15 +278,12 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, se *session) {
 	host := esxi.NewClient(executor)
 	inventory, e := host.Inventory(r.Context())
 	if e != nil {
+		_ = host.Close()
 		problem(w, 400, e.Error())
 		return
 	}
 	se.mu.Lock()
-	if se.host != nil {
-		if closer, ok := se.host.Exec.(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
-	}
+	se.closeHost()
 	se.host = host
 	se.report = nil
 	se.job = nil
