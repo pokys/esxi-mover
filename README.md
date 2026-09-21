@@ -96,6 +96,16 @@ sector-by-sector checksum or a boot test.
 
 ## Status
 
-Used on ESXi 6.5; other versions are covered by synthetic tests only. See
-[TESTING.md](TESTING.md). Build with `docker build -t esxi-mover:local .` and
-run it with `MOVER_IMAGE=esxi-mover:local sh ./start.sh`. MIT licensed.
+**Tried on real hosts** (two standalone ESXi hosts, production VMs): Copy only,
+Copy and switch with Start the target, and the same with Shut down only at the
+end.
+
+**Not yet tried on a real host**, only in automated tests: Copy only with Shut
+down only at the end, the Stop link, signing in with an SSH key, Force Power
+Off, restoring the source registration, the automatic stop on low source space,
+and losing SSH or restarting the appliance during a clone. Synthetic tests cover
+ESXi 6.5 to 8.x; see [TESTING.md](TESTING.md) for the versions tried for real.
+
+Build with `docker build -t
+esxi-mover:local .` and run it with `MOVER_IMAGE=esxi-mover:local sh
+./start.sh`. MIT licensed.
