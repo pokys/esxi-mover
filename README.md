@@ -1,4 +1,5 @@
 # ESXi Mover
+<img width="784" height="723" alt="image" src="https://github.com/user-attachments/assets/9c987289-47b1-4d62-8352-75d10bcc7dfe" />
 
 Moves or copies a VM between VMFS datastores on a **standalone ESXi**
 host (Free editions included). No vCenter, no paid API: a small web app drives the
