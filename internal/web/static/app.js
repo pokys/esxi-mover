@@ -41,9 +41,9 @@ $('refreshLog').addEventListener('click',()=>refreshAudit());
 
 $('newConnection').addEventListener('click',()=>{clearTimeout(pollTimer);show('job',false);show('nextAction',false);show('connect');report=null;error('');});
 let auditTimer=null;
-function setTheme(t){document.documentElement.dataset.theme=t;$('theme').textContent=t==='dark'?'Light':'Dark';try{localStorage.setItem('mover-theme',t);}catch{}}
-(()=>{let t='';try{t=localStorage.getItem('mover-theme')||'';}catch{}
- if(t!=='dark'&&t!=='light') t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
- setTheme(t);})();
+// The appliance stores nothing in the browser, so the choice lasts for this
+// page only; the system preference decides on every load.
+function setTheme(t){document.documentElement.dataset.theme=t;$('theme').textContent=t==='dark'?'Light':'Dark';}
+setTheme(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
 $('theme').addEventListener('click',()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark'));
 $('auditBox').addEventListener('toggle',()=>{clearInterval(auditTimer);auditTimer=null;if($('auditBox').open){refreshAudit();auditTimer=setInterval(refreshAudit,2000);}});
