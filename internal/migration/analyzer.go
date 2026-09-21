@@ -311,6 +311,12 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, ownLock, 
 	if e != nil {
 		return r, e
 	}
+	// uuid.action = keep is VMware's own answer "I moved it": the host keeps
+	// the identity and never stops the power-on to ask. A COPY is left alone,
+	// because a copy run beside its original needs "I copied it".
+	if req.Mode == "MOVE" {
+		r.TargetConfig["uuid.action"] = "keep"
+	}
 	stable := stableConfig(r.Config)
 	sort.Strings(fingerprints)
 	sum := sha256.Sum256([]byte(r.SourceVMX + "\n" + stable.String() + "\n" + strings.Join(fingerprints, "\n")))

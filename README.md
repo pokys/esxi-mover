@@ -341,7 +341,11 @@ registration do not automatically resume. ESXi reboot is outside this guarantee.
 | Target Power On fails | Target stays registered; source files remain. Resolve the VM question/failure in Host Client. Explicit registration rollback is available only while target is confirmed off. |
 | Rollback result unknown | Reconcile both VMX paths manually; do not boot either copy until ownership and registration are clear. |
 
-For the moved/copied VM question, the tool parses the actual question and the unique
+For MOVE the target VMX carries `uuid.action = "keep"`, VMware's setting for a
+moved VM, so the host keeps the identity and does not ask. A COPY is left without
+it, because a copy started beside its original needs a new identity.
+
+Should the host ask anyway, the tool parses the actual question and the unique
 English `I moved it` choice (including VMware's `_moved` spelling). It never assumes
 an answer index. Unknown, localized or ambiguous questions require manual action.
 
