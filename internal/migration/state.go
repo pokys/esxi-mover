@@ -13,6 +13,7 @@ type State struct {
 	Started, Updated, DiskStarted                                    time.Time
 	DiskBytes                                                        int64
 	Complete, TargetVerified, SourceFilesPreserved, CanRollback      bool
+	Live                                                             bool
 	SourceRegistration, TargetRegistration, SourcePower, TargetPower string
 	SourceVMX, TargetVMX                                             string
 }
@@ -38,10 +39,14 @@ const (
 	phaseCompleted        = "completed"
 	phaseFailed           = "failed"
 	phaseRolledBack       = "rolled_back"
+	phaseSnapshot         = "snapshot"
+	phaseCutover          = "cutover"
+	phaseConsolidating    = "consolidating"
+	phaseRestoring        = "restoring"
 )
 
 func NewJob(r Report) *Job {
-	return &Job{state: State{ID: r.ID, Phase: phaseQueued, Mode: r.Request.Mode, Message: "Waiting for final preflight", Started: time.Now(), Updated: time.Now(), DiskCount: len(r.Disks), SourceFilesPreserved: true, SourceRegistration: "registered", TargetRegistration: "not registered", SourcePower: string(r.Power), TargetPower: "not running (unregistered)", SourceVMX: r.SourceVMX, TargetVMX: r.TargetVMX}, plan: r, actions: make(chan string, 1)}
+	return &Job{state: State{ID: r.ID, Phase: phaseQueued, Mode: r.Request.Mode, Live: r.Request.Live, Message: "Waiting for final preflight", Started: time.Now(), Updated: time.Now(), DiskCount: len(r.Disks), SourceFilesPreserved: true, SourceRegistration: "registered", TargetRegistration: "not registered", SourcePower: string(r.Power), TargetPower: "not running (unregistered)", SourceVMX: r.SourceVMX, TargetVMX: r.TargetVMX}, plan: r, actions: make(chan string, 1)}
 }
 func (j *Job) Snapshot() State { j.mu.Lock(); defer j.mu.Unlock(); return j.state }
 func (j *Job) update(fn func(*State)) {

@@ -46,7 +46,19 @@ func verifyDisk(ctx context.Context, h Host, d Disk) error {
 	}
 	return nil
 }
-func copyConfig(ctx context.Context, h Host, r Report) error {
+// diskNames maps each disk's VMX key to the file the target VMX must name:
+// the cloned base disk, or for a live cutover the copied snapshot delta.
+func diskNames(disks []Disk, deltas map[string]string) map[string]string {
+	names := map[string]string{}
+	for _, d := range disks {
+		names[d.Key] = path.Base(d.Target)
+		if n, ok := deltas[d.Key]; ok {
+			names[d.Key] = n
+		}
+	}
+	return names
+}
+func copyConfig(ctx context.Context, h Host, r Report, config vmx.Config, names map[string]string) error {
 	for _, f := range r.ConfigFiles {
 		data, e := h.ReadFile(ctx, f.Source)
 		if e != nil {
@@ -60,7 +72,7 @@ func copyConfig(ctx context.Context, h Host, r Report) error {
 			return fmt.Errorf("target configuration file verification failed")
 		}
 	}
-	serialized := r.TargetConfig.String()
+	serialized := config.String()
 	if e := h.WriteTarget(ctx, r.TargetDir, path.Base(r.TargetVMX), []byte(serialized)); e != nil {
 		return e
 	}
@@ -80,7 +92,7 @@ func copyConfig(ctx context.Context, h Host, r Report) error {
 		return fmt.Errorf("rewritten VMX has unsupported devices or missing disks")
 	}
 	for _, d := range r.Disks {
-		if parsed[d.Key] != path.Base(d.Target) {
+		if parsed[d.Key] != names[d.Key] {
 			return fmt.Errorf("target VMX points to the wrong disk")
 		}
 	}

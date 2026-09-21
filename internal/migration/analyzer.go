@@ -135,6 +135,9 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 	if r.Power == esxi.Suspended {
 		r.check("Power state", statusBlock, "Suspended VM is unsupported")
 	}
+	if req.Live && r.Power != esxi.On {
+		r.check("Live migration", statusBlock, "Live migration needs a running VM; turn Live off to migrate this VM cold")
+	}
 	raw, e := a.Host.ReadFile(ctx, r.SourceVMX)
 	if e != nil {
 		return r, e
@@ -359,8 +362,17 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 	default:
 		r.check("Free space", statusOK, "Reserved estimate uses allocated capacity + 15% + 1 GiB")
 	}
+	// While the base disks are cloned, the guest writes into a snapshot delta
+	// on the source datastore. A full datastore would stop the running VM.
+	if req.Live && source.Free < r.Provisioned/10+(1<<30) {
+		r.check("Source free space", statusWarning, "Little room on the source datastore for changes written during the copy; a full datastore stops the VM")
+	}
 	if r.Ready {
-		r.check("Migration", statusOK, "Ready for a fresh preflight and cold migration")
+		kind := "cold migration"
+		if req.Live {
+			kind = "live migration (experimental)"
+		}
+		r.check("Migration", statusOK, "Ready for a fresh preflight and "+kind)
 	}
 	return r, nil
 }

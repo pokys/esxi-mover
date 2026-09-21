@@ -84,7 +84,13 @@ func (c *Client) Redact(s string) string {
 	return s
 }
 func (c *Client) run(ctx context.Context, category, script string, input []byte) (Result, error) {
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	return c.runFor(ctx, 45*time.Second, category, script, input)
+}
+
+// runFor bounds a command that legitimately takes long, such as copying a
+// snapshot delta or merging one.
+func (c *Client) runFor(ctx context.Context, limit time.Duration, category, script string, input []byte) (Result, error) {
+	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	start := time.Now()
 	r, e := c.Exec.Run(ctx, Command{category, script, input})

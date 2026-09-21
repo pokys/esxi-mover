@@ -42,6 +42,15 @@ On a production ESXi 6.5 host:
   registration switch), with no "moved or copied" question at power-on;
 - the target folder named after the source, and a free name offered on collision.
 
+Before live migration was written, each of its steps was run by hand on the
+same host with a running test VM: a snapshot without memory, `vmkfstools -i` of
+the base disk while the VM ran (as fast as a cold clone), the clone keeping the
+base disk's CID so the copied delta attaches unchanged, the delta and VMSD/VMSN
+copied after a graceful shutdown (well under a second), registration of the
+copy with its snapshot on another datastore, power-on without a question, and
+merging the snapshot on the running copy and on the running source.
+**The tool's live mode itself has not yet run on a real host.**
+
 **Not yet exercised on a real host:** SSH key sign-in, Force Power Off, rollback,
 rejected registration, SSH loss or an appliance restart during a clone, and ESXi
 6.7, 7.x and 8.x.

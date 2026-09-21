@@ -18,14 +18,12 @@ func (e *Engine) analyzer() Analyzer {
 	return Analyzer{Host: e.Host, ApplianceUUID: e.Options.ApplianceUUID}
 }
 func (e *Engine) Run(ctx context.Context, j *Job) {
-	err := e.run(ctx, j)
-	if err != nil {
-		j.update(func(s *State) {
-			s.Phase = phaseFailed
-			s.Error = err.Error()
-			s.Message = "Stopped. Source files are preserved. Review the exact registration state before taking action."
-			s.Complete = true
-		})
+	if j.plan.Request.Live {
+		e.runLive(ctx, j)
+		return
+	}
+	if err := e.run(ctx, j); err != nil {
+		markFailed(j, err)
 	}
 }
 func (e *Engine) run(ctx context.Context, j *Job) error {
@@ -51,7 +49,13 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 	if err = matchPlan(r, fresh); err != nil {
 		return err
 	}
-	if err = e.shutdown(ctx, j, fresh); err != nil {
+	if err = e.shutdown(ctx, j, fresh, func() error {
+		fresh, err := e.analyzer().inspect(ctx, r.Request, r.ID, progress{ownLock: true})
+		if err != nil {
+			return err
+		}
+		return matchPlan(r, fresh)
+	}); err != nil {
 		return err
 	}
 	// Re-read VMX and every snapshot signal after shutdown, before any clone.
@@ -82,7 +86,7 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 		if err = e.requireOff(ctx, r.VM.ID); err != nil {
 			return err
 		}
-		startErr := e.Host.StartClone(ctx, r.ID, i, r.VM.ID, d.Source, d.Target)
+		startErr := e.Host.StartClone(ctx, r.ID, i, r.VM.ID, d.Source, d.Target, true)
 		if startErr != nil {
 			j.phase(phaseReconnecting, "Clone launch result is unknown; inspecting metadata without relaunching")
 		}
@@ -102,7 +106,7 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 		return err
 	}
 	j.phase(phaseVerifyingConfig, "Copying only selected configuration files and verifying target VMX")
-	if err = copyConfig(ctx, e.Host, r); err != nil {
+	if err = copyConfig(ctx, e.Host, r, r.TargetConfig, diskNames(r.Disks, nil)); err != nil {
 		return err
 	}
 	// Verify all targets together once more before the commit boundary.
@@ -192,7 +196,9 @@ func pause(ctx context.Context, d time.Duration) error {
 		return nil
 	}
 }
-func (e *Engine) shutdown(ctx context.Context, j *Job, r Report) error {
+// shutdown powers the source off gracefully. revalidate runs before a forced
+// power-off is honoured, so the VM is checked again at the last moment.
+func (e *Engine) shutdown(ctx context.Context, j *Job, r Report, revalidate func() error) error {
 	if r.Power == esxi.Off {
 		j.update(func(s *State) { s.SourcePower = "Powered off" })
 		return nil
@@ -225,12 +231,7 @@ func (e *Engine) shutdown(ctx context.Context, j *Job, r Report) error {
 				return ctx.Err()
 			case action := <-j.actions:
 				if action == "force" {
-					// Revalidate identity and snapshot state before honoring the queued action.
-					fresh, err := e.analyzer().inspect(ctx, r.Request, r.ID, progress{ownLock: true})
-					if err != nil {
-						return err
-					}
-					if err = matchPlan(r, fresh); err != nil {
+					if err := revalidate(); err != nil {
 						return err
 					}
 					if err = e.Host.ForceOff(ctx, r.VM.ID); err != nil {
