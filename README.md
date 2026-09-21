@@ -13,8 +13,7 @@ VM is registered.
 - **Copy only** or **Copy and switch**: both shut the VM down and copy it; the
   second then registers the copy in place of the source and can start it.
 - **Shut down only at the end** *(experimental)*: the VM keeps running while
-  its disks are copied and is off only for the final changes. A production
-  server was down for under a minute instead of about 17.
+  its disks are copied and is off only for the final changes.
 - Checks everything before touching anything, and stops rather than guesses.
 - **Stop** at any time before the point of no return.
 - Shows every SSH command it runs, with exit code and duration.
@@ -94,18 +93,12 @@ sector-by-sector checksum or a boot test.
   mv /tmp/esxi-mover/active /tmp/esxi-mover/reviewed-$(date +%s)
   ```
 
-## Status
+## Build
 
-**Tried on real hosts** (two standalone ESXi hosts, production VMs): Copy only,
-Copy and switch with Start the target, and the same with Shut down only at the
-end.
+```sh
+go test ./...
+docker build -t esxi-mover:local .
+MOVER_IMAGE=esxi-mover:local sh ./start.sh
+```
 
-**Not yet tried on a real host**, only in automated tests: Copy only with Shut
-down only at the end, the Stop link, signing in with an SSH key, Force Power
-Off, restoring the source registration, the automatic stop on low source space,
-and losing SSH or restarting the appliance during a clone. Synthetic tests cover
-ESXi 6.5 to 8.x; see [TESTING.md](TESTING.md) for the versions tried for real.
-
-Build with `docker build -t
-esxi-mover:local .` and run it with `MOVER_IMAGE=esxi-mover:local sh
-./start.sh`. MIT licensed.
+MIT licensed.
