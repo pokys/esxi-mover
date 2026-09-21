@@ -238,8 +238,12 @@ func (s *SSHExecutor) Run(ctx context.Context, cmd Command) (Result, error) {
 	go func() {
 		select {
 		case <-ctx.Done():
-			// Close only this session; other commands share the connection.
+			// Closing the session is not enough: ESXi keeps it open while the
+			// remote command runs, and vim-cmd power.on blocks for as long as a
+			// VM question is pending, so the caller's timeout would never fire.
+			// Retire the whole connection; the next command dials a fresh one.
 			session.Close()
+			s.discard(c)
 		case <-done:
 		}
 	}()
