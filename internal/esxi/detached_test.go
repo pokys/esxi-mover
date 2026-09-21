@@ -95,7 +95,7 @@ func TestDetachedWorkerSurvivesInitiatingShell(t *testing.T) {
 // is gone; what still has to hold is where the directory sits.
 func TestTargetPathAcceptsAnyDirectChildOfAVolume(t *testing.T) {
 	for _, ok := range []string{
-		"/vmfs/volumes/623af301-bbe12cec/VeeamB&R",
+		"/vmfs/volumes/5a1b2c3d-00112233/Lab & Test",
 		"/vmfs/volumes/target/esxi-mover-test",
 		"/vmfs/volumes/t/a b c",
 	} {
@@ -104,11 +104,11 @@ func TestTargetPathAcceptsAnyDirectChildOfAVolume(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{
-		"/vmfs/volumes/623af301",           // the volume root itself
-		"/vmfs/volumes/623af301/a/b",       // nested below the volume
-		"/vmfs/volumes/623af301/.hidden",   // hidden directory
+		"/vmfs/volumes/5a1b2c3d",           // the volume root itself
+		"/vmfs/volumes/5a1b2c3d/a/b",       // nested below the volume
+		"/vmfs/volumes/5a1b2c3d/.hidden",   // hidden directory
 		"/tmp/somewhere",                   // outside the datastores
-		"/vmfs/volumes/623af301/../escape", // traversal
+		"/vmfs/volumes/5a1b2c3d/../escape", // traversal
 		"/vmfs/volumes//empty",
 	} {
 		if TargetPath(bad) {
