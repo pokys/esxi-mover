@@ -56,7 +56,12 @@ function renderJob(j) {$('job').dataset.state=outcome[j.Phase]||(j.Complete?'fai
 function poll(){clearTimeout(pollTimer);pollTimer=setTimeout(async()=>{try{const j=renderJob(await api('job'));refreshAudit();if(!j.Complete)poll();}catch(e){error(e.message+' — the ESXi clone may continue.');poll();}},2000);}
 for(const id of ['wait','manual','force'])$(id).addEventListener('click',()=>action(async()=>{if(id==='force'&&!confirm('Force Power Off is equivalent to cutting power and may lose guest data. Explicitly confirm force shutdown of the selected source VM.'))return;await api('control',{Action:id,ForceConfirmed:id==='force'});},'Sending the request to ESXi'));
 $('rollback').addEventListener('click',()=>action(async()=>{if(!confirm('Restore source registration? The target must be powered off. Both copies and all files will remain, and neither VM will be powered on.'))return;renderJob(await api('rollback',{Confirmed:true}));},'Restoring the source registration'));
-$('refreshLog').addEventListener('click',()=>refreshAudit());
+$('copyLog').addEventListener('click',async()=>{
+ const b=$('copyLog');
+ try{await navigator.clipboard.writeText($('technical').textContent);b.textContent='Copied';}
+ catch{getSelection().selectAllChildren($('technical'));b.textContent='Press Ctrl+C';}
+ setTimeout(()=>{b.textContent='Copy';},2000);
+});
 (async()=>{try{const d=await api('session');csrf=d.csrf;show('login',false);show('connect');if(d.connected)connected(d.address);if(d.hasJob){show('connect',false);show('audit');renderJob(await api('job'));poll();}}catch{}})();
 
 function connected(host){$('statusText').textContent=host;show('status');}
