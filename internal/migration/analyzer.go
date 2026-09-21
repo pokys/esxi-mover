@@ -323,10 +323,12 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 		return r, e
 	}
 	// uuid.action = keep is VMware's own answer "I moved it": the host keeps
-	// the identity and never stops the power-on to ask. A COPY is left alone,
-	// because a copy run beside its original needs "I copied it".
+	// the identity and never stops the power-on to ask. A COPY must also drop
+	// an inherited keep setting, because it needs its own identity.
 	if req.Mode == modeMove {
 		r.TargetConfig["uuid.action"] = "keep"
+	} else {
+		delete(r.TargetConfig, "uuid.action")
 	}
 	stable := stableConfig(r.Config)
 	sort.Strings(fingerprints)
@@ -364,8 +366,12 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 	}
 	// While the base disks are cloned, the guest writes into a snapshot delta
 	// on the source datastore. A full datastore would stop the running VM.
-	if req.Live && source.Free < r.Provisioned/10+(1<<30) {
-		r.check("Source free space", statusWarning, "Little room on the source datastore for changes written during the copy; a full datastore stops the VM")
+	if req.Live {
+		if err := requireLiveSourceSpace(source.Free); err != nil {
+			r.check("Source free space", statusBlock, err.Error())
+		} else if source.Free < r.Provisioned/10+minLiveSourceFree {
+			r.check("Source free space", statusWarning, "Little room on the source datastore for changes written during the copy; a full datastore stops the VM")
+		}
 	}
 	if r.Ready {
 		kind := "cold migration"
@@ -416,6 +422,7 @@ func (a Analyzer) localFile(ctx context.Context, ref, dir string, ds []esxi.Data
 	}
 	return canonical, nil
 }
+
 // freeFolder offers the first unused variant of a name so a collision leaves
 // the operator with an answer rather than a puzzle.
 func (a Analyzer) freeFolder(ctx context.Context, mount, folder string) (string, error) {

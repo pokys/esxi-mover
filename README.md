@@ -89,11 +89,19 @@ never starts the source.
    registration, starts the target if chosen, and merges the snapshot there.
 
 The outage is the time from the shutdown to the end instead of the whole copy.
-Until registration switches, any failure puts the source back as it
-was registered, without the snapshot; if it had already been shut down, it
-stays off. The tool only ever merges its own snapshot, named `esxi-mover-…`:
+Until registration switches, a failure restores the source registration and
+merges the snapshot once any clone is confirmed to have ended. An unknown clone
+outcome leaves the snapshot and operation lock for manual review. If the source
+had already been shut down, it stays off. The tool only ever merges its own
+snapshot, named `esxi-mover-…`:
 if the VM has any other snapshot, it stops for manual review. The source
 datastore must have room for the changes written during the copy.
+
+Live migration requires at least **1 GiB free on the source**. While cloning,
+the tool checks it on each poll. Below that reserve, or after five minutes
+without a successful space check, it requests a stop and waits for the clone's
+exit before merging the snapshot. This is a guard, not reserved space: fast
+guest writes can still fill the datastore between checks or during a merge.
 
 The **Technical log** at the bottom lists every SSH command with its exit code
 and duration; **Copy** puts it on the clipboard.
@@ -122,8 +130,9 @@ the exact VMX). It is not a checksum of every sector, and not a boot test.
 irreversible step (registration, the live cutover, merging a snapshot); after
 that it disappears. It ends the running clone and registers nothing. A cold
 migration leaves the source as it is, off if it was already shut down. A live
-one merges its snapshot back; the source keeps running, as it has not been
-shut down yet.
+one merges its snapshot back after the clone's exit is confirmed; the source
+keeps running, as it has not been shut down yet. If exit cannot be confirmed,
+the snapshot and lock remain for manual review.
 
 - **Closing the browser** does not stop anything. Reopen the page in the same
   browser and the job is shown again.
@@ -131,6 +140,8 @@ shut down yet.
   target folder may be partial. Inspect it, but don't use it.
 - **SSH drops:** the clone keeps running on ESXi and is never started twice.
   After five minutes without SSH the page reports an unknown outcome.
+  For a live migration, confirm that the clone has ended before merging the
+  temporary snapshot or archiving the operation lock.
 - **The appliance restarts:** the disk being cloned finishes on ESXi. The
   remaining steps do not resume.
 

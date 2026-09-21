@@ -2,8 +2,10 @@ package migration
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"esxi-mover/internal/esxi"
 )
@@ -39,6 +41,7 @@ func eventIndex(h *fakeHost, name string) int {
 // and without a snapshot.
 func TestLiveCopyEndsLikeAColdCopy(t *testing.T) {
 	h := liveFake(2)
+	h.files[sourceDir+"/lab.vmx"] += "uuid.action = \"keep\"\n"
 	s := liveRun(t, h, modeCopy)
 	if s.Phase != phaseCompleted || s.Error != "" {
 		t.Fatalf("live copy did not complete: %s %s", s.Phase, s.Error)
@@ -59,6 +62,9 @@ func TestLiveCopyEndsLikeAColdCopy(t *testing.T) {
 	}
 	if cfg := h.files[targetVMX]; !strings.Contains(cfg, "\"d1.vmdk\"") || strings.Contains(cfg, "000001") || h.targetSnapshot != "Get Snapshot:\n" {
 		t.Fatalf("the copy was left on its snapshot: %s", cfg)
+	}
+	if strings.Contains(h.files[targetVMX], "uuid.action") {
+		t.Fatal("the live copy inherited the source's keep-identity setting")
 	}
 	if h.snapshot != "Get Snapshot:\n" || strings.Contains(h.files[sourceDir+"/lab.vmx"], "000001") {
 		t.Fatal("the source was left on its snapshot")
@@ -165,5 +171,172 @@ func TestLiveNeverMergesAForeignSnapshot(t *testing.T) {
 		if strings.HasPrefix(e, "consolidate:") {
 			t.Fatal("a tree with a foreign snapshot was merged")
 		}
+	}
+}
+
+// A failed observation is not proof of clone exit. The base disk must stay
+// read-only behind the snapshot, and the host lock must keep new jobs out.
+func TestLiveUnknownCloneKeepsSnapshotAndLock(t *testing.T) {
+	for _, scenario := range []string{"timeout", "status lost", "launch and status lost"} {
+		t.Run(scenario, func(t *testing.T) {
+			h := liveFake(1)
+			h.cloneHangs = true
+			o := testOptions()
+			if scenario == "timeout" {
+				o.CloneTimeout = 5 * time.Millisecond
+			} else {
+				h.pollErrors = 1000
+				h.launchLost = scenario == "launch and status lost"
+			}
+			r, err := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: modeMove, Live: true})
+			if err != nil || !r.Ready {
+				t.Fatalf("analysis blocked: %v %+v", err, r.Checks)
+			}
+			j := NewJob(r)
+			(&Engine{Host: h, Options: o}).Run(context.Background(), j)
+			s := j.Snapshot()
+			if s.Phase != phaseFailed || !strings.Contains(s.Error, "clone exit was not confirmed") {
+				t.Fatalf("unknown clone did not require review: %+v", s)
+			}
+			if !h.locked || h.snapshot == "Get Snapshot:\n" || hasEvent(h, "consolidate:") || hasEvent(h, "finish") {
+				t.Fatalf("unknown clone lost its protection: %v", h.events)
+			}
+			if hasEvent(h, "shutdown") || hasEvent(h, "register:") || h.clones != 1 {
+				t.Fatalf("unknown clone triggered more migration work: %v", h.events)
+			}
+		})
+	}
+}
+
+type cancelAfterCloneHost struct {
+	*fakeHost
+	cancel context.CancelFunc
+}
+
+func (h *cancelAfterCloneHost) StartClone(ctx context.Context, id string, index, vmID int, src, dst string, requireOff bool) error {
+	err := h.fakeHost.StartClone(ctx, id, index, vmID, src, dst, requireOff)
+	h.cancel()
+	return err
+}
+
+func TestLiveCancellationKeepsUnconfirmedCloneSnapshot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := &cancelAfterCloneHost{fakeHost: liveFake(1), cancel: cancel}
+	h.cloneHangs = true
+	r, err := (Analyzer{Host: h}).Analyze(ctx, Request{VMID: 7, TargetUUID: "target", Mode: modeMove, Live: true})
+	if err != nil || !r.Ready {
+		t.Fatalf("analysis blocked: %v", err)
+	}
+	j := NewJob(r)
+	(&Engine{Host: h, Options: testOptions()}).Run(ctx, j)
+	s := j.Snapshot()
+	if s.Phase != phaseFailed || !h.locked || hasEvent(h.fakeHost, "consolidate:") || !strings.Contains(s.Error, "context canceled") {
+		t.Fatalf("cancellation lost clone protection: %+v %v", s, h.events)
+	}
+}
+
+func TestLiveRequiresSourceSpaceBeforeSnapshot(t *testing.T) {
+	for _, live := range []bool{false, true} {
+		for _, free := range []int64{0, minLiveSourceFree - 1, minLiveSourceFree} {
+			h := liveFake(1)
+			h.ds[0].Free = free
+			r, err := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: modeCopy, Live: live})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantReady := !live || free >= minLiveSourceFree
+			if r.Ready != wantReady {
+				t.Fatalf("live=%t free=%d ready=%t: %+v", live, free, r.Ready, r.Checks)
+			}
+		}
+	}
+}
+
+// Change free-space observations only while the clone is running, so tests
+// exercise monitoring after the preflight rather than an initial refusal.
+type spaceChangingHost struct {
+	*fakeHost
+	free                 int64
+	spaceErrors          int
+	ignoreStop           bool
+	completeAfter, polls int
+}
+
+func (h *spaceChangingHost) Datastores(ctx context.Context) ([]esxi.Datastore, error) {
+	ds, err := h.fakeHost.Datastores(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if h.clones > 0 && !h.cloneStopped {
+		if h.spaceErrors != 0 {
+			if h.spaceErrors > 0 {
+				h.spaceErrors--
+			}
+			return nil, fmt.Errorf("space reading unavailable")
+		}
+		ds[0].Free = h.free
+	}
+	return ds, nil
+}
+
+func (h *spaceChangingHost) CloneStatus(ctx context.Context, index int) (esxi.CloneStatus, error) {
+	h.polls++
+	if h.completeAfter > 0 && h.polls >= h.completeAfter {
+		h.cloneHangs = false
+	}
+	return h.fakeHost.CloneStatus(ctx, index)
+}
+
+func (h *spaceChangingHost) StopClone(ctx context.Context, index int) error {
+	if h.ignoreStop {
+		h.event(fmt.Sprintf("stop-clone:%d", index))
+		return nil // The request succeeded, but there is still no exit marker.
+	}
+	return h.fakeHost.StopClone(ctx, index)
+}
+
+func TestLiveSpaceMonitoringStopsBeforeRestoring(t *testing.T) {
+	for _, scenario := range []string{"space exhausted", "monitor unavailable", "stop unconfirmed", "transient monitor failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			h := &spaceChangingHost{fakeHost: liveFake(1), free: minLiveSourceFree - 1}
+			h.cloneHangs = true
+			switch scenario {
+			case "monitor unavailable":
+				h.spaceErrors = -1
+			case "stop unconfirmed":
+				h.ignoreStop = true
+			case "transient monitor failure":
+				h.free, h.spaceErrors, h.completeAfter = 80<<30, 1, 3
+			}
+			r, err := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: modeCopy, Live: true})
+			if err != nil || !r.Ready {
+				t.Fatalf("analysis blocked: %v", err)
+			}
+			j := NewJob(r)
+			(&Engine{Host: h, Options: testOptions()}).Run(context.Background(), j)
+			s := j.Snapshot()
+			if scenario == "transient monitor failure" {
+				if s.Phase != phaseCompleted || hasEvent(h.fakeHost, "stop-clone:") {
+					t.Fatalf("a transient monitor error stopped the migration: %+v %v", s, h.events)
+				}
+				return
+			}
+			if !hasEvent(h.fakeHost, "stop-clone:") || hasEvent(h.fakeHost, "shutdown") {
+				t.Fatalf("space guard did not stop the clone before cutover: %v", h.events)
+			}
+			if h.ignoreStop {
+				if s.Phase != phaseFailed || !h.locked || hasEvent(h.fakeHost, "consolidate:") {
+					t.Fatalf("an unconfirmed stop merged the snapshot: %+v %v", s, h.events)
+				}
+				return
+			}
+			if s.Phase != phaseRolledBack || h.locked || h.power[7] != esxi.On || h.snapshot != "Get Snapshot:\n" {
+				t.Fatalf("source not restored after confirmed clone exit: %+v %v", s, h.events)
+			}
+			if eventIndex(h.fakeHost, "stop-clone:0") > eventIndex(h.fakeHost, "consolidate:7") {
+				t.Fatal("the snapshot was merged before stopping the clone")
+			}
+		})
 	}
 }
