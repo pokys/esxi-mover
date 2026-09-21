@@ -19,10 +19,10 @@ $('auth').addEventListener('change',()=>{const key=$('auth').value==='key';show(
 $('connectForm').addEventListener('submit',event=>{event.preventDefault();action(async()=>{const key=$('auth').value==='key';const d=await api('connect',{Username:$('username').value,Password:key?'':$('password').value,PrivateKey:key?$('privateKey').value:'',Passphrase:key?$('passphrase').value:'',Fingerprint:fingerprint,Confirmed:true});for(const id of ['password','privateKey','passphrase'])$(id).value='';$('hostInfo').textContent=$('host').value+' · '+d.Capabilities.Version;connected($('host').value);$('vm').replaceChildren();d.VMs.forEach(v=>{const o=text('option',v.Name+' — '+v.Datastore);o.value=v.ID;$('vm').append(o);});$('datastore').replaceChildren();stores={};d.Datastores.forEach(x=>{stores[x.UUID]=x.Name;});d.Datastores.filter(x=>x.Mounted&&['VMFS-5','VMFS-6'].includes(x.Type)).forEach(x=>{const o=text('option',x.Name+' · '+size(x.Free)+' free');o.value=x.UUID;$('datastore').append(o);});show('existing',Boolean(d.ExistingOperation));$('existing').textContent=d.ExistingOperation;show('selection');show('audit');show('connect',false);},'Signing in to '+$('host').value+' and reading virtual machines and datastores');});
 const mode=()=>document.querySelector('input[name=mode]:checked').value;
 const hints={
- COPY:'Makes a verified copy and leaves it unregistered. The source stays as it is.',
- MOVE:'Registers the verified copy in place of the source. The source files are kept.',
- liveCOPY:'Copies the disks while the VM keeps running, behind a temporary snapshot. The copy is like a VM after a power cut (crash-consistent).',
- liveMOVE:'Copies the disks while the VM keeps running, then shuts it down only to copy what changed, and starts it on the target. If anything fails, the source runs on as before.'
+ COPY:'The VM is shut down and stays off. The copy holds everything up to the shutdown and is left unregistered.',
+ MOVE:'The VM is off during the copy and is registered on the target afterwards. Nothing is lost.',
+ liveCOPY:'The VM keeps running. The copy is the VM as it was when copying started; later changes are not in it.',
+ liveMOVE:'The VM keeps running during the copy and is off for about a minute at the end. Nothing is lost; if anything fails, the source runs on.'
 };
 function modeChanged(){
  const move=mode()==='MOVE',live=$('live').checked;
@@ -45,9 +45,7 @@ function renderReport(d){
  $('fromStore').textContent=d.SourceDatastore;$('fromDir').textContent=base(d.SourceDir)+'/';
  $('toStore').textContent=stores[d.Request.TargetUUID]||'target datastore';$('toDir').textContent=base(d.TargetDir)+'/';
  $('routeMode').textContent=(d.Request.Live?'LIVE ':'')+d.Request.Mode+(move&&d.Request.PowerOn&&!d.Request.Live?' + power on':'');
- $('modeNote').textContent=d.Request.Live
-  ?(move?'Experimental. The VM runs during the copy and is down only while the changes are copied. Until it runs on the target, any failure puts the source back as it was.':'Experimental. The VM keeps running; its temporary snapshot is merged back once the copy is verified.')
-  :(move?'The source files stay where they are. Registration switches to the target only after it is verified.':'The source stays registered as it is. The copy is left unregistered.');
+ $('modeNote').textContent=(d.Request.Live?'Experimental. ':'')+hints[(d.Request.Live?'live':'')+d.Request.Mode];
  metrics('metrics',[['Virtual machine',d.VM.Name],['Power state',d.Power],['Data to copy',size(d.Allocated)+' of '+size(d.Provisioned)],['Space needed',size(d.Required)+' of '+size(d.TargetFree)+' free']]);
  const bad=d.Checks.filter(c=>c.Status!=='OK'), blocks=bad.filter(c=>c.Status==='BLOCK').length;
  $('checkSummary').textContent=blocks?blocks+' of '+d.Checks.length+' safety checks block this migration':bad.length?'Safe to start · '+bad.length+' warning'+(bad.length>1?'s':''):'All '+d.Checks.length+' safety checks passed';
