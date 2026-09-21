@@ -45,7 +45,7 @@ func TestDetachedWorkerSurvivesInitiatingShell(t *testing.T) {
 				return Result{}, nil
 			}}
 			client := NewClient(fake)
-			if e := client.StartClone(context.Background(), id, 0, 7, "/vmfs/volumes/source/VM's $(touch SHOULD_NOT_EXIST)/disk.vmdk", "/vmfs/volumes/target/esxi-mover-test/disk.vmdk"); e != nil {
+			if e := client.StartClone(context.Background(), id, 0, 7, "/vmfs/volumes/source/VM's $(touch SHOULD_NOT_EXIST)/disk.vmdk", "/vmfs/volumes/target/esxi-mover-test/disk.vmdk", true); e != nil {
 				t.Fatal(e)
 			}
 			script := strings.ReplaceAll(fake.Commands[len(fake.Commands)-1].Script, activeDir, filepath.ToSlash(runtime))
