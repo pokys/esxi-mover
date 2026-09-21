@@ -56,5 +56,25 @@ progress::-moz-progress-bar{background:var(--accent);border-radius:980px}
 summary{cursor:pointer;color:var(--accent);font-size:13px;font-weight:500;margin-top:14px}
 pre{background:var(--pre);color:var(--pre-fg);padding:14px;border-radius:10px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5;margin:10px 0 0}
 footer{font-size:11px;color:var(--faint);text-align:center;margin:22px 0 4px}
+#busy{position:sticky;top:52px;z-index:9;display:flex;align-items:center;gap:12px;margin:10px 0;padding:13px 16px;border-radius:12px;background:var(--accent);color:var(--accent-fg);font-size:14px;font-weight:500;box-shadow:0 6px 20px var(--ring)}
+#busyText::after{content:'…'}
+.spinner{width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .8s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+#job{transition:background .3s,border-color .3s}
+#job[data-state=running]{border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
+#job[data-state=ok]{background:var(--ok-bg);border:2px solid var(--ok)}
+#job[data-state=warn]{background:var(--warn-bg);border:2px solid var(--warn)}
+#job[data-state=fail]{background:var(--block-bg);border:2px solid var(--block)}
+#job[data-state=ok] h2{color:var(--ok)}#job[data-state=warn] h2{color:var(--warn)}#job[data-state=fail] h2{color:var(--block)}
+#job:not([data-state=running]) h2{font-size:22px}
+.outcome{display:none;place-items:center;width:30px;height:30px;border-radius:50%;color:#fff;font-size:17px;font-weight:700;flex-shrink:0}
+#job[data-state=ok] .outcome{display:grid;background:var(--ok)}#job[data-state=ok] .outcome::before{content:'✓'}
+#job[data-state=warn] .outcome{display:grid;background:var(--warn)}#job[data-state=warn] .outcome::before{content:'!'}
+#job[data-state=fail] .outcome{display:grid;background:var(--block)}#job[data-state=fail] .outcome::before{content:'✕'}
+#job:not([data-state=running]) .step{display:none}
+#job[data-state=ok] progress::-webkit-progress-value{background:var(--ok)}#job[data-state=ok] progress::-moz-progress-bar{background:var(--ok)}
+#job[data-state=fail] progress::-webkit-progress-value{background:var(--block)}#job[data-state=fail] progress::-moz-progress-bar{background:var(--block)}
+#job:not([data-state=running]) .metric{background:var(--surface)}
+#error{position:sticky;top:52px;z-index:9;font-weight:500;border-width:2px}
 [hidden]{display:none!important}
 @media(max-width:680px){main{padding:14px 14px 22px}header{padding:10px 14px}.pill,.brand small{display:none}section{padding:16px}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.metric strong{font-size:14px}}
