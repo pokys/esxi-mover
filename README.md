@@ -114,6 +114,12 @@ the exact VMX). It is not a checksum of every sector, and not a boot test.
 
 ## When something goes wrong
 
+**Stop migration…** under the progress bar ends a migration before its first
+irreversible step (registration, the live cutover, merging a snapshot); after
+that it disappears. It ends the running clone and registers nothing. A cold
+migration leaves the source as it is, off if it was already shut down. A live
+one merges its snapshot back and keeps the source running.
+
 - **Closing the browser** does not stop anything. Reopen the page in the same
   browser and the job is shown again.
 - **Clone or verification fails:** the source stays registered and off; the

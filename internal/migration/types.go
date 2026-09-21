@@ -46,6 +46,7 @@ type Host interface {
 	WriteTarget(context.Context, string, string, []byte) error
 	StartClone(context.Context, string, int, int, string, string, bool) error
 	CloneStatus(context.Context, int) (esxi.CloneStatus, error)
+	StopClone(context.Context, int) error
 	Unregister(context.Context, int) error
 	Register(context.Context, string) (int, error)
 	PowerOn(context.Context, int) error

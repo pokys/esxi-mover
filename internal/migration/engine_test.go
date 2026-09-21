@@ -32,7 +32,7 @@ type fakeHost struct {
 	question                                                                                                           string
 	lastAnswer                                                                                                         string
 	pollErrors                                                                                                         int
-	snapshotFail, foreignSnapshot                                                                                      bool
+	snapshotFail, foreignSnapshot, cloneHangs, cloneStopped                                                           bool
 }
 
 const sourceDir = "/vmfs/volumes/source/lab"
@@ -234,11 +234,24 @@ func (h *fakeHost) CloneStatus(_ context.Context, index int) (esxi.CloneStatus, 
 		h.pollErrors--
 		return esxi.CloneStatus{}, fmt.Errorf("temporary connection loss")
 	}
+	if h.cloneHangs {
+		if !h.cloneStopped {
+			return esxi.CloneStatus{Alive: true, Progress: 50, Log: "Clone: 50% done."}, nil
+		}
+		return esxi.CloneStatus{Done: true, ExitCode: 143, Progress: 50}, nil
+	}
 	code := 0
 	if index == h.cloneFail {
 		code = 1
 	}
 	return esxi.CloneStatus{Done: true, ExitCode: code, Progress: 100, Log: "Clone: 100% done."}, nil
+}
+func (h *fakeHost) StopClone(_ context.Context, index int) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.event(fmt.Sprintf("stop-clone:%d", index))
+	h.cloneStopped = true
+	return nil
 }
 func (h *fakeHost) Unregister(_ context.Context, id int) error {
 	h.mu.Lock()

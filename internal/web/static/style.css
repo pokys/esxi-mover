@@ -111,5 +111,7 @@ footer{font-size:11px;color:var(--faint);text-align:center;margin:22px 0 4px}
 #audit summary:hover{color:var(--muted)}
 .logbar{display:flex;align-items:center;gap:12px}.logbar p{flex:1;font-size:12px}.logbar button{margin:6px 0 0;padding:5px 12px;font-size:12px}
 .tag{font-style:normal;font-size:11px;font-weight:600;color:var(--warn);background:var(--warn-bg);border-radius:980px;padding:2px 8px;margin-left:6px}
+.stopbar{text-align:right;margin:-10px 0 10px}
+#stop{color:var(--faint);font-size:12px}#stop:hover{color:var(--block)}
 [hidden]{display:none!important}
 @media(max-width:680px){main{padding:14px 14px 22px}header{padding:10px 14px}.brand small{display:none}section{padding:16px}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.route{grid-template-columns:1fr}.end:last-child{text-align:left}.arrow{justify-items:start}.arrow span{transform:rotate(90deg)}.metric strong{font-size:14px}}
