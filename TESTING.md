@@ -49,11 +49,13 @@ base disk's CID so the copied delta attaches unchanged, the delta and VMSD/VMSN
 copied after a graceful shutdown (well under a second), registration of the
 copy with its snapshot on another datastore, power-on without a question, and
 merging the snapshot on the running copy and on the running source.
-**The tool's live mode itself has not yet run on a real host.**
+The tool's live MOVE then ran on that host end to end: clone while running,
+about 38 s of outage (guest shutdown, delta copy and the full safety checks),
+no question at power-on, and the snapshot merged on the running target.
 
-**Not yet exercised on a real host:** SSH key sign-in, Force Power Off, rollback,
-rejected registration, SSH loss or an appliance restart during a clone, and ESXi
-6.7, 7.x and 8.x.
+**Not yet exercised on a real host:** live COPY, the Stop link, SSH key sign-in,
+Force Power Off, rollback, rejected registration, SSH loss or an appliance
+restart during a clone, and ESXi 6.7, 7.x and 8.x.
 
 ## Testing a new host or version
 
