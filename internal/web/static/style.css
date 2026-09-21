@@ -76,5 +76,20 @@ footer{font-size:11px;color:var(--faint);text-align:center;margin:22px 0 4px}
 #job[data-state=fail] progress::-webkit-progress-value{background:var(--block)}#job[data-state=fail] progress::-moz-progress-bar{background:var(--block)}
 #job:not([data-state=running]) .metric{background:var(--surface)}
 #error{position:sticky;top:52px;z-index:9;font-weight:500;border-width:2px}
+/* preflight */
+.route{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:14px;background:var(--fill);border-radius:12px;padding:14px 16px;margin:4px 0 6px}
+.end span{display:block;font-size:11px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.02em}
+.end strong{display:block;font-size:17px;font-weight:600;letter-spacing:-.02em;overflow-wrap:anywhere}
+.end small{display:block;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.end:last-child{text-align:right}
+.arrow{display:grid;justify-items:center;color:var(--accent)}
+.arrow strong{font-size:11px;font-weight:600;background:var(--surface);border-radius:980px;padding:3px 10px;white-space:nowrap}
+.arrow span{font-size:26px;line-height:1}
+.summary{border-radius:10px;padding:11px 14px;font-size:14px;font-weight:600;margin:12px 0 8px}
+.summary.ok{background:var(--ok-bg);color:var(--ok)}.summary.warning{background:var(--warn-bg);color:var(--warn)}.summary.block{background:var(--block-bg);color:var(--block)}
+.problem{border-left:3px solid;border-radius:6px;padding:8px 12px;margin:6px 0;background:var(--fill);font-size:13px}
+.problem.block{border-color:var(--block)}.problem.warning{border-color:var(--warn)}
+.problem strong{display:block;font-weight:600}.problem span{color:var(--muted);overflow-wrap:anywhere}
+#checkBox summary{margin-top:6px}
 [hidden]{display:none!important}
-@media(max-width:680px){main{padding:14px 14px 22px}header{padding:10px 14px}.pill,.brand small{display:none}section{padding:16px}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.metric strong{font-size:14px}}
+@media(max-width:680px){main{padding:14px 14px 22px}header{padding:10px 14px}.pill,.brand small{display:none}section{padding:16px}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.route{grid-template-columns:1fr}.end:last-child{text-align:left}.arrow{justify-items:start}.arrow span{transform:rotate(90deg)}.metric strong{font-size:14px}}
