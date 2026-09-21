@@ -838,3 +838,14 @@ func TestMovedQuestionIsAnsweredWhileTheVMReportsPoweredOn(t *testing.T) {
 		t.Fatalf("the moved question was not answered: %q", h.lastAnswer)
 	}
 }
+
+// A MOVE must not stop at VMware's moved-or-copied question: the target VMX
+// says the VM was moved. A COPY keeps the question for the operator.
+func TestMoveTargetKeepsIdentityAndCopyDoesNot(t *testing.T) {
+	if got := analyze(t, newFake(1), "MOVE", true).TargetConfig["uuid.action"]; got != "keep" {
+		t.Fatalf("a MOVE target does not keep its identity: %q", got)
+	}
+	if got := analyze(t, newFake(1), "COPY", false).TargetConfig["uuid.action"]; got != "" {
+		t.Fatalf("a COPY target was told it was moved: %q", got)
+	}
+}
