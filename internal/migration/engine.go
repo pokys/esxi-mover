@@ -113,7 +113,7 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 		if startErr != nil {
 			j.phase(phaseReconnecting, "Clone launch result is unknown; inspecting metadata without relaunching")
 		}
-		if err = e.waitClone(ctx, j, i, startErr); err != nil {
+		if _, err = e.waitClone(ctx, j, i, startErr); err != nil {
 			return err
 		}
 		if err = e.requireOff(ctx, r.VM.ID); err != nil {
@@ -221,6 +221,7 @@ func pause(ctx context.Context, d time.Duration) error {
 		return nil
 	}
 }
+
 // shutdown powers the source off gracefully. revalidate runs before a forced
 // power-off is honoured, so the VM is checked again at the last moment.
 func (e *Engine) shutdown(ctx context.Context, j *Job, r Report, revalidate func() error) error {
@@ -278,46 +279,77 @@ func (e *Engine) shutdown(ctx context.Context, j *Job, r Report, revalidate func
 		}
 	}
 }
-func (e *Engine) waitClone(ctx context.Context, j *Job, index int, startErr error) error {
+
+// waitClone reports whether the worker's exit marker was observed, even for
+// a failed or stopped clone. A timeout or lost connection does not prove exit.
+func (e *Engine) waitClone(ctx context.Context, j *Job, index int, startErr error) (bool, error) {
 	deadline := time.Now().Add(e.Options.CloneTimeout)
 	lastContact := time.Now()
 	startingSince := time.Now()
+	lastSpaceCheck := time.Now()
+	var stopCause error
+	var stopDeadline time.Time
 	stopping := false
 	for time.Now().Before(deadline) {
-		// A stop ends only this job's recorded clone process; the worker still
-		// publishes the exit code, so completion is observed as usual.
-		if j.stopRequested() && !stopping && e.Host.StopClone(ctx, index) == nil {
-			stopping = true
-			j.update(func(s *State) { s.Message = "Stopping the clone" })
-		}
 		status, err := e.Host.CloneStatus(ctx, index)
 		if err != nil {
 			if time.Since(lastContact) > e.Options.DisconnectTimeout {
-				return fmt.Errorf("cannot determine remote clone outcome; it may still be running; inspect ESXi transient metadata: %w", err)
+				return false, fmt.Errorf("cannot determine remote clone outcome; it may still be running; inspect ESXi transient metadata: %w", err)
 			}
 			j.phase(phaseReconnecting, "SSH unavailable or remote process state uncertain; clone will never be relaunched automatically")
 		} else {
 			lastContact = time.Now()
 			j.update(func(s *State) { s.Phase = phaseCloning; s.Progress = status.Progress; s.TechnicalLog = status.Log })
 			if status.Done {
+				if stopCause != nil {
+					return true, stopCause
+				}
 				if j.stopRequested() {
-					return errStopped
+					return true, errStopped
 				}
 				if status.ExitCode != 0 {
-					return fmt.Errorf("vmkfstools clone exited with code %d; source registration is unchanged", status.ExitCode)
+					return true, fmt.Errorf("vmkfstools clone exited with code %d; source registration is unchanged", status.ExitCode)
 				}
 				j.update(func(s *State) { s.Progress = 100 })
-				return nil
+				return true, nil
 			}
 			if status.Log == "" && time.Since(startingSince) > e.Options.DisconnectTimeout {
-				return fmt.Errorf("clone did not produce progress or an exit marker; launch outcome remains unknown (%v)", startErr)
+				return false, fmt.Errorf("clone did not produce progress or an exit marker; launch outcome remains unknown (%v)", startErr)
+			}
+			if j.plan.Request.Live && stopCause == nil && !j.stopRequested() {
+				free, spaceErr := e.liveSourceFree(ctx, j.plan)
+				if spaceErr == nil {
+					lastSpaceCheck = time.Now()
+					stopCause = requireLiveSourceSpace(free)
+				} else if time.Since(lastSpaceCheck) > e.Options.DisconnectTimeout {
+					stopCause = fmt.Errorf("source free space can no longer be monitored: %w", spaceErr)
+				}
+			}
+		}
+		if j.stopRequested() || stopCause != nil {
+			// A successful kill request does not prove exit. Keep observing the
+			// worker's marker before live recovery can merge the snapshot.
+			if stopDeadline.IsZero() {
+				stopDeadline = time.Now().Add(e.Options.DisconnectTimeout)
+			}
+			if !stopping && e.Host.StopClone(ctx, index) == nil {
+				stopping = true
+			}
+			j.update(func(s *State) {
+				s.Message = "Stopping the clone; waiting for confirmed exit"
+				if stopCause != nil {
+					s.Message += ": " + stopCause.Error()
+				}
+			})
+			if time.Now().After(stopDeadline) {
+				return false, fmt.Errorf("clone stop could not be confirmed; detached worker may still be running")
 			}
 		}
 		if err = pause(ctx, e.Options.PollInterval); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return fmt.Errorf("clone observation deadline exceeded; detached worker may still be running")
+	return false, fmt.Errorf("clone observation deadline exceeded; detached worker may still be running")
 }
 
 // registrations reconciles uncertain mutation results against canonical VMX paths.

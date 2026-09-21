@@ -33,7 +33,7 @@ type fakeHost struct {
 	question                                                                                                           string
 	lastAnswer                                                                                                         string
 	pollErrors                                                                                                         int
-	snapshotFail, foreignSnapshot, cloneHangs, cloneStopped                                                           bool
+	snapshotFail, foreignSnapshot, cloneHangs, cloneStopped                                                            bool
 }
 
 const sourceDir = "/vmfs/volumes/source/lab"
@@ -141,6 +141,7 @@ func (h *fakeHost) Power(_ context.Context, id int) (esxi.Power, error) {
 	}
 	return p, nil
 }
+
 // Snapshot reports the tree of the VM's own files: the source, or a target
 // registered with the snapshot metadata copied from the source.
 func (h *fakeHost) Snapshot(_ context.Context, id int) (string, error) {
@@ -324,6 +325,7 @@ func (h *fakeHost) Answer(_ context.Context, id int, message, choice string) err
 	h.power[id] = esxi.On
 	return nil
 }
+
 // vmxOf finds the VMX file behind a registered VM.
 func (h *fakeHost) vmxOf(id int) string {
 	for _, v := range h.vms {
@@ -981,10 +983,17 @@ func TestMovedQuestionIsAnsweredWhileTheVMReportsPoweredOn(t *testing.T) {
 // A MOVE must not stop at VMware's moved-or-copied question: the target VMX
 // says the VM was moved. A COPY keeps the question for the operator.
 func TestMoveTargetKeepsIdentityAndCopyDoesNot(t *testing.T) {
-	if got := analyze(t, newFake(1), "MOVE", true).TargetConfig["uuid.action"]; got != "keep" {
-		t.Fatalf("a MOVE target does not keep its identity: %q", got)
-	}
-	if got := analyze(t, newFake(1), "COPY", false).TargetConfig["uuid.action"]; got != "" {
-		t.Fatalf("a COPY target was told it was moved: %q", got)
+	for _, inherited := range []string{"", "uuid.action = \"keep\"\n"} {
+		for mode, want := range map[string]string{modeMove: "keep", modeCopy: ""} {
+			h := newFake(1)
+			h.files[sourceDir+"/lab.vmx"] += inherited
+			before := h.files[sourceDir+"/lab.vmx"]
+			if got := analyze(t, h, mode, mode == modeMove).TargetConfig["uuid.action"]; got != want {
+				t.Fatalf("%s with inherited setting %q: got %q, want %q", mode, inherited, got, want)
+			}
+			if h.files[sourceDir+"/lab.vmx"] != before {
+				t.Fatal("source identity setting was changed")
+			}
+		}
 	}
 }

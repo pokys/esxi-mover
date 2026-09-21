@@ -25,9 +25,13 @@ and a real POSIX shell for quoting and the detached clone worker. They cover:
   changes appearing after Analyze.
 - **Failure handling:** each failure before the registration switch leaves the
   source registered, lost replies are reconciled and never retried, a clone is
-  never launched twice, rollback, power-on problems.
+  never launched twice, rollback, power-on problems. Unknown live clone outcomes
+  retain the snapshot and lock; low source space stops the clone before recovery,
+  and an unconfirmed stop cannot merge the snapshot. COPY drops an inherited
+  `uuid.action = "keep"`, including during live migration.
 - **SSH:** host key pinned before any credentials are sent, keyboard-interactive
-  only hosts, one shared connection, a timed-out command dropping it, and
+  only hosts, one shared connection, timeouts during commands and channel opening
+  (including a retried connection), and
   credentials never appearing in errors or the audit log.
 - **Web:** token, cookies, CSRF, Origin checks, request limits, login throttling.
 
@@ -55,7 +59,8 @@ no question at power-on, and the snapshot merged on the running target.
 
 **Not yet exercised on a real host:** live COPY, the Stop link, SSH key sign-in,
 Force Power Off, rollback, rejected registration, SSH loss or an appliance
-restart during a clone, and ESXi 6.7, 7.x and 8.x.
+restart during a clone, automatic stopping on low source space, and ESXi 6.7,
+7.x and 8.x.
 
 ## Testing a new host or version
 

@@ -215,38 +215,39 @@ func (s *SSHExecutor) Close() error {
 }
 
 func (s *SSHExecutor) Run(ctx context.Context, cmd Command) (Result, error) {
-	c, e := s.connection(ctx)
-	if e != nil {
-		return Result{ExitCode: -1}, fmt.Errorf("SSH connection failed: %s", s.describe(e))
-	}
-	session, e := c.NewSession()
-	if e != nil {
-		// The pooled connection is unusable and has carried no part of this
-		// command, so dialling again cannot repeat any remote work. A failure
-		// once the command is running is never retried.
-		s.discard(c)
-		if c, e = s.connection(ctx); e != nil {
+	var c *ssh.Client
+	var session *ssh.Session
+	var e error
+	for attempt := 0; attempt < 2; attempt++ {
+		if e = ctx.Err(); e != nil {
+			return Result{ExitCode: -1}, e
+		}
+		c, e = s.connection(ctx)
+		if e != nil {
 			return Result{ExitCode: -1}, fmt.Errorf("SSH connection failed: %s", s.describe(e))
 		}
-		if session, e = c.NewSession(); e != nil {
+		// Channel opening can hang too. Watch this specific connection before
+		// NewSession, and keep watching through the command. Closing only a
+		// session is insufficient when the peer has stopped answering.
+		watched := c
+		stop := context.AfterFunc(ctx, func() { s.discard(watched) })
+		defer stop()
+		session, e = c.NewSession()
+		if e == nil {
+			break
+		}
+		stop()
+		s.discard(c)
+		// No command was sent, so one retry on a fresh connection is safe.
+		// The context check above prevents a retry after cancellation.
+		if attempt == 1 {
 			return Result{ExitCode: -1}, fmt.Errorf("SSH session unavailable")
 		}
 	}
 	defer session.Close()
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		select {
-		case <-ctx.Done():
-			// Closing the session is not enough: ESXi keeps it open while the
-			// remote command runs, and vim-cmd power.on blocks for as long as a
-			// VM question is pending, so the caller's timeout would never fire.
-			// Retire the whole connection; the next command dials a fresh one.
-			session.Close()
-			s.discard(c)
-		case <-done:
-		}
-	}()
+	if e = ctx.Err(); e != nil {
+		return Result{ExitCode: -1}, e
+	}
 	var out, errout limitedBuffer
 	session.Stdout = &out
 	session.Stderr = &errout

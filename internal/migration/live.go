@@ -22,11 +22,35 @@ import (
 // (the snapshot delta) is copied. A COPY and a MOVE then end exactly like
 // their cold counterparts, and the tool never starts the source.
 //
-// Until a MOVE switches registration, every failure puts the source back as
-// it was registered, without the snapshot. Nothing is ever deleted; what was
-// written to the target folder stays there for inspection.
+// Until a MOVE switches registration, failures restore the source only when
+// no clone may still be reading its base disks. An unknown clone outcome keeps
+// the snapshot and operation lock for manual review.
 
 func liveSnapshot(id string) string { return "esxi-mover-" + id[:8] }
+
+// A guard against snapshot growth, not a reservation: guest writes can still
+// consume space between checks or while the snapshot is being consolidated.
+const minLiveSourceFree int64 = 1 << 30
+
+func requireLiveSourceSpace(free int64) error {
+	if free < minLiveSourceFree {
+		return fmt.Errorf("source datastore has %d MiB free; live migration requires at least 1 GiB", free>>20)
+	}
+	return nil
+}
+
+func (e *Engine) liveSourceFree(ctx context.Context, r Report) (int64, error) {
+	ds, err := e.Host.Datastores(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, d := range ds {
+		if strings.HasPrefix(r.SourceVMX, path.Join("/vmfs/volumes", d.UUID)+"/") && d.Mounted && esxi.SupportedVMFS(d.Type) {
+			return d.Free, nil
+		}
+	}
+	return 0, fmt.Errorf("source datastore is no longer available as mounted VMFS")
+}
 
 // errRestored is a failure after which the source was put back as it was.
 type errRestored struct{ cause error }
@@ -96,10 +120,15 @@ func (e *Engine) live(ctx context.Context, j *Job) (err error) {
 	j.phase(phaseSnapshot, "Taking a temporary snapshot; the VM keeps running")
 	snapErr := e.Host.CreateSnapshot(ctx, r.VM.ID, name)
 	// From here the snapshot may exist, even when the reply was lost. Until a
-	// MOVE switches registration, every failure merges it again.
+	// MOVE switches registration, it can be merged once any clone has exited.
 	committed := false
+	clonePending := false
 	defer func() {
 		if err == nil || committed {
+			return
+		}
+		if clonePending {
+			err = fmt.Errorf("%w; clone exit was not confirmed: the source snapshot %s and operation lock are retained. Confirm the clone has ended on ESXi before merging the snapshot or archiving the lock", err, name)
 			return
 		}
 		j.phase(phaseRestoring, "Restoring the source: registering it as before and merging the temporary snapshot")
@@ -135,11 +164,16 @@ func (e *Engine) live(ctx context.Context, j *Job) (err error) {
 			s.DiskStarted = time.Now()
 			s.DiskBytes = d.Provisioned
 		})
+		// A lost launch reply can still mean a running detached clone.
+		clonePending = true
 		startErr := e.Host.StartClone(ctx, r.ID, i, r.VM.ID, d.Source, d.Target, false)
 		if startErr != nil {
 			j.phase(phaseReconnecting, "Clone launch result is unknown; inspecting metadata without relaunching")
 		}
-		if err = e.waitClone(ctx, j, i, startErr); err != nil {
+		var exited bool
+		exited, err = e.waitClone(ctx, j, i, startErr)
+		clonePending = !exited
+		if err != nil {
 			return err
 		}
 		j.phase(phaseVerifyingDisk, "Verifying the cloned base disk")
@@ -348,7 +382,11 @@ func (e *Engine) liveGuard(ctx context.Context, r Report, name string, deltas ma
 			return fmt.Errorf("the VM's disks changed during the live migration")
 		}
 	}
-	return nil
+	free, err := e.liveSourceFree(ctx, r)
+	if err != nil {
+		return fmt.Errorf("cannot check source free space: %w", err)
+	}
+	return requireLiveSourceSpace(free)
 }
 
 func (e *Engine) ownSnapshotOnly(ctx context.Context, id int, name string) error {

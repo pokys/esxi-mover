@@ -98,6 +98,7 @@ func sshServer(t *testing.T, cfg *ssh.ServerConfig) (string, string) {
 	}()
 	return ln.Addr().String(), ssh.FingerprintSHA256(signer.PublicKey())
 }
+
 // stallConn stops delivering input once stalled, the way ESXi's sshd stops
 // acting on a session while its command runs. The x/crypto server would
 // otherwise answer a session close at once and hide the hang.
@@ -250,5 +251,77 @@ func TestSSHTimeoutAbandonsACommandThatNeverFinishes(t *testing.T) {
 	// The next command must still work on a freshly dialled connection.
 	if _, e := exec.Run(context.Background(), Command{Category: "test", Script: "anything"}); e != nil {
 		t.Fatal("no usable connection after an abandoned command:", e)
+	}
+}
+
+// A host can finish the handshake but stop answering channel-open requests.
+// Exercise both the first connection and the retry after a rejected channel.
+func TestSSHTimeoutDuringChannelOpen(t *testing.T) {
+	for _, retry := range []bool{false, true} {
+		t.Run(fmt.Sprintf("retry=%t", retry), func(t *testing.T) {
+			_, key, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			signer, err := ssh.NewSignerFromKey(key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := &ssh.ServerConfig{NoClientAuth: true}
+			cfg.AddHostKey(signer)
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { ln.Close() })
+			opening := make(chan struct{})
+			go func() {
+				for attempt := 0; ; attempt++ {
+					conn, err := ln.Accept()
+					if err != nil {
+						return
+					}
+					server, channels, requests, err := ssh.NewServerConn(conn, cfg)
+					if err != nil {
+						conn.Close()
+						return
+					}
+					go ssh.DiscardRequests(requests)
+					for channel := range channels {
+						if retry && attempt == 0 {
+							_ = channel.Reject(ssh.ResourceShortage, "try a new connection")
+						} else {
+							close(opening)
+							// Leave the request unanswered until the client closes.
+						}
+					}
+					server.Close()
+				}
+			}()
+			executor, err := NewSSH(SSHOptions{Address: ln.Addr().String(), User: "fixture", Password: "fixture", Fingerprint: ssh.FingerprintSHA256(signer.PublicKey())})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { executor.Close() })
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			result := make(chan error, 1)
+			go func() { _, err := executor.Run(ctx, Command{Script: "true"}); result <- err }()
+			select {
+			case <-opening:
+			case <-time.After(3 * time.Second):
+				t.Fatal("channel opening was not reached")
+			}
+			select {
+			case err := <-result:
+				if err == nil {
+					t.Fatal("unanswered channel open reported success")
+				}
+			case <-time.After(time.Second):
+				executor.Close()
+				<-result
+				t.Fatal("channel opening ignored the context deadline")
+			}
+		})
 	}
 }
