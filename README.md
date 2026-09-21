@@ -71,8 +71,8 @@ A moved VM keeps its identity (`uuid.action = "keep"`), so ESXi does not ask
 "moved or copied?" at power-on. A copy is left without it: started next to its
 original, it must get a new identity.
 
-The panel **What the tool is doing on ESXi** lists every SSH command with its
-exit code and duration.
+The **Technical log** at the bottom lists every SSH command with its exit code
+and duration; **Copy** puts it on the clipboard.
 
 ## What it refuses
 
