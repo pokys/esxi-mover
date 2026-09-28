@@ -54,7 +54,7 @@ func TestBringDisksIsOffByDefault(t *testing.T) {
 	}
 	offered := false
 	for _, s := range rows[0].Steps {
-		offered = offered || strings.Contains(s.Text, "Bring disks from other folders")
+		offered = offered || strings.Contains(s.Text, "Include disks outside the VM folder")
 	}
 	if !offered {
 		t.Fatalf("the option was not offered: %+v", rows[0].Steps)
@@ -243,6 +243,36 @@ func TestMissingToolsWarns(t *testing.T) {
 	r, _ := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY"})
 	if len(find(r, "VMware Tools")) != 0 {
 		t.Fatal("a VM that is already off needs no Tools check")
+	}
+}
+
+// A switch registers the target as a new VM, which the host's autostart does
+// not know; the analysis and the finished job both say so.
+func TestSwitchRemindsOfAutostart(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mode   string
+		action string
+		warned bool
+	}{
+		"switch, on":    {modeMove, "powerOn", true},
+		"switch, off":   {modeMove, "none", false},
+		"copy only, on": {modeCopy, "powerOn", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newFake(1)
+			h.autostart = map[int]esxi.AutoStart{7: {Order: 2, Action: tc.action}}
+			r := analyze(t, h, tc.mode, false)
+			rows := find(r, "Autostart")
+			if (len(rows) == 1 && rows[0].Status == statusWarning) != tc.warned || (!tc.warned && len(rows) != 0) {
+				t.Fatalf("autostart warning = %v, want %t", rows, tc.warned)
+			}
+			j := NewJob(r)
+			(&Engine{h, testOptions()}).Run(context.Background(), j)
+			s := j.Snapshot()
+			if s.Phase != phaseCompleted || strings.Contains(s.Message, "position 2") != tc.warned {
+				t.Fatalf("final message: %s %q", s.Phase, s.Message)
+			}
+		})
 	}
 }
 

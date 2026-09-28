@@ -12,9 +12,9 @@ VM is registered.
 
 - **Copy only** or **Copy and switch**: both shut the VM down and copy it; the
   second then registers the copy in place of the source and can start it.
-- **Shut down only at the end** *(experimental)*: the VM keeps running while
-  its disks are copied and is off only for the final changes.
-- **Bring disks from other folders** *(experimental)*: disks on another
+- **Keep the VM running during the copy** *(experimental)*: the VM is off only
+  for the final changes.
+- **Include disks outside the VM folder** *(experimental)*: disks on another
   datastore or in a subfolder are copied into the target folder too.
 - Checks everything before touching anything, and stops rather than guesses.
 - **Stop** at any time before the point of no return.
@@ -60,23 +60,25 @@ Use a trusted management network: the page takes ESXi root credentials.
 | Copy and switch | Not registered, files kept | Registered; running with **Start the target** |
 
 The tool never starts the source. A switched VM keeps its identity, so ESXi
-does not ask "moved or copied?"; a copy is left to get a new one.
+does not ask "moved or copied?"; a copy is left to get a new one. Autostart
+belongs to the registration, so a switched VM is not in the host's autostart;
+the preflight and the finished job remind you to turn it on again.
 
-**Shut down only at the end** takes a snapshot of its own, clones the now
-read-only base disks while the VM runs, then shuts it down and copies only what
-changed. The result is the same as without it. The source datastore needs at
+**Keep the VM running during the copy** takes a snapshot of its own, clones the
+now read-only base disks while the VM runs, then shuts it down and copies only
+what changed. The result is the same as without it. The source datastore needs at
 least 1 GiB free for those changes. Only the tool's own `esxi-mover-…` snapshot
 is ever merged; any other snapshot stops the migration for review.
 
-**Bring disks from other folders** clones every disk the VM uses into the one
-target folder, wherever it lies; a name already taken gets a suffix, such as
+**Include disks outside the VM folder** clones every disk the VM uses into the
+one target folder, wherever it lies; a name already taken gets a suffix, such as
 `data_1.vmdk`, and the target VMX points at it. The originals are only read and
 stay where they are. The folder each such disk lies in is checked as well:
 snapshot files of that disk, or another VMX there that uses it, stop the
 migration.
 
-Together with *Shut down only at the end*, the delta of such a disk grows next
-to it, so that datastore needs the same 1 GiB free. The delta is copied into
+Together with *Keep the VM running during the copy*, the delta of such a disk
+grows next to it, so that datastore needs the same 1 GiB free. The delta is copied into
 the target folder and the target's snapshot list is rewritten to name the copy,
 never the source disk. A disk that has to be renamed in the target folder
 cannot be migrated this way, because its delta finds it by name.
@@ -86,7 +88,7 @@ cannot be migrated this way, because its delta finds it by name.
 - VMs with any snapshot, including leftover snapshot files
 - suspended VMs, linked clones, RDM, shared, independent or encrypted disks,
   vTPM, PCI passthrough
-- disks outside the VM folder, unless *Bring disks from other folders* is on
+- disks outside the VM folder, unless *Include disks outside the VM folder* is on
 - anything but VMFS-5 and VMFS-6
 - a target without room for the used data + 15% + 1 GiB
 
@@ -96,8 +98,8 @@ sector-by-sector checksum or a boot test.
 ## When something goes wrong
 
 - **Stop migration…** under the progress bar ends the running clone and
-  registers nothing. With *Shut down only at the end*, the source simply keeps
-  running.
+  registers nothing. With *Keep the VM running during the copy*, the source
+  simply keeps running.
 - **Closing the browser** stops nothing; reopen the page in the same browser
   to see the job.
 - **Outcome unknown** means the connection was lost and the clone may still be

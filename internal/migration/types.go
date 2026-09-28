@@ -39,6 +39,7 @@ type Host interface {
 	Power(context.Context, int) (esxi.Power, error)
 	Snapshot(context.Context, int) (string, error)
 	ToolsRunning(context.Context, int) (bool, error)
+	Autostart(context.Context) (map[int]esxi.AutoStart, error)
 	Shutdown(context.Context, int) error
 	ForceOff(context.Context, int) error
 	VerifyChain(context.Context, string) error
@@ -107,10 +108,13 @@ type Report struct {
 	Disks                                                                    []Disk
 	ConfigFiles                                                              []ConfigFile
 	TargetFree, Required, Provisioned, Allocated                             int64
-	Ready                                                                    bool
-	Checks                                                                   []Check
-	Config                                                                   vmx.Config `json:"-"`
-	TargetConfig                                                             vmx.Config `json:"-"`
+	// Autostart is the source's position in the host's autostart sequence,
+	// 0 when the host does not start it. A switch does not carry it over.
+	Autostart    int
+	Ready        bool
+	Checks       []Check
+	Config       vmx.Config `json:"-"`
+	TargetConfig vmx.Config `json:"-"`
 }
 
 func (r *Report) check(name, status, detail string) {

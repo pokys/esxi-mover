@@ -159,12 +159,20 @@ func (e *Engine) run(ctx context.Context, j *Job) error {
 	}
 	j.update(func(s *State) {
 		s.Phase = phaseCompleted
-		s.Message = "Completed. No source VM files were deleted."
+		s.Message = "Completed. No source VM files were deleted." + autostartNote(r)
 		s.Complete = true
 		s.CanRollback = false
 		s.SourcePower = "Powered off"
 	})
 	return nil
+}
+
+// autostartNote reminds, after a switch, that the host no longer starts the VM.
+func autostartNote(r Report) string {
+	if r.Request.Mode != modeMove || r.Autostart == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" The source was in the host's autostart (position %d); turn autostart on for the migrated VM under Host › Manage › System › Autostart.", r.Autostart)
 }
 func matchPlan(before, after Report) error {
 	if !after.Ready {
@@ -304,7 +312,15 @@ func (e *Engine) waitClone(ctx context.Context, j *Job, index int, startErr erro
 			j.phase(phaseReconnecting, "SSH unavailable or remote process state uncertain; clone will never be relaunched automatically")
 		} else {
 			lastContact = time.Now()
-			j.update(func(s *State) { s.Phase = phaseCloning; s.Progress = status.Progress; s.TechnicalLog = status.Log })
+			j.update(func(s *State) {
+				s.Phase = phaseCloning
+				s.Progress = status.Progress
+				current := fmt.Sprintf("Disk %d: %s\n%s", index+1, s.CurrentDisk, status.Log)
+				s.TechnicalLog = strings.Join(append(append([]string{}, j.cloneLogs...), current), "\n\n")
+				if status.Done {
+					j.cloneLogs = append(j.cloneLogs, current)
+				}
+			})
 			if status.Done {
 				if stopCause != nil {
 					return true, stopCause

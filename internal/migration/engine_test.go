@@ -35,6 +35,7 @@ type fakeHost struct {
 	pollErrors                                                                                                         int
 	snapshotFail, foreignSnapshot, cloneHangs, cloneStopped                                                            bool
 	noTools, toolsUnknown                                                                                              bool
+	autostart                                                                                                          map[int]esxi.AutoStart
 }
 
 const sourceDir = "/vmfs/volumes/source/lab"
@@ -155,6 +156,11 @@ func (h *fakeHost) Snapshot(_ context.Context, id int) (string, error) {
 		return h.targetSnapshot, nil
 	}
 	return h.snapshot, nil
+}
+func (h *fakeHost) Autostart(context.Context) (map[int]esxi.AutoStart, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.autostart, nil
 }
 func (h *fakeHost) ToolsRunning(context.Context, int) (bool, error) {
 	h.mu.Lock()
@@ -518,6 +524,18 @@ func TestCopyPreservesSource(t *testing.T) {
 	for p, v := range before {
 		if h.files[p] != v {
 			t.Fatal("source file changed", p)
+		}
+	}
+}
+
+// The clone output keeps every disk, not only the one cloned last.
+func TestCloneLogKeepsEveryDisk(t *testing.T) {
+	h := newFake(2)
+	j, _ := run(t, h, "COPY", false)
+	log := j.Snapshot().TechnicalLog
+	for _, want := range []string{"Disk 1: " + sourceDir + "/d0.vmdk", "Disk 2: " + sourceDir + "/d1.vmdk"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("clone output lacks %q:\n%s", want, log)
 		}
 	}
 }

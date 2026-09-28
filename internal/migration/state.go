@@ -26,6 +26,9 @@ type Job struct {
 	stop    bool
 	// final is set once the job has passed the point where a stop is honoured.
 	final bool
+	// cloneLogs keeps the output of every finished disk clone, so the
+	// technical log shows all disks, not only the one being cloned.
+	cloneLogs []string
 }
 
 // Job phases, as the web UI receives them.

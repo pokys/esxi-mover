@@ -136,7 +136,7 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 		r.check("Power state", statusBlock, "Suspended VM is unsupported")
 	}
 	if req.Live && r.Power != esxi.On {
-		r.check("Shut down at the end", statusBlock, "The VM is already off, so there is nothing to shut down at the end; turn the option off")
+		r.check("Keep the VM running", statusBlock, "The VM is already off, so there is nothing to keep running during the copy; turn the option off")
 	}
 	// A graceful shutdown needs VMware Tools. Without it the migration does not
 	// fail, it waits for the operator, so say so up front instead of blocking.
@@ -149,6 +149,17 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 			r.advised("VMware Tools", statusWarning, "VMware Tools is not running in the guest", toolsAdvice(req.Live))
 		default:
 			r.check("VMware Tools", statusOK, "Running; the guest is shut down gracefully")
+		}
+	}
+	// Autostart belongs to the registration. A switch registers the target as a
+	// new VM, so the host would no longer start it; say so before and after.
+	// An unreadable sequence only means no reminder, never a block.
+	if req.Mode == modeMove {
+		if seq, e := a.Host.Autostart(ctx); e == nil && seq[req.VMID].On() {
+			r.Autostart = seq[req.VMID].Order
+			r.advised("Autostart", statusWarning, fmt.Sprintf("The host starts this VM when it boots (position %d); the switched VM is not started", r.Autostart), advise("Autostart does not move with the VM",
+				"Autostart belongs to the VM's registration. After the switch the target is a newly registered VM, so the host would not start it after a reboot.",
+				say(fmt.Sprintf("After the migration, open Host › Manage › System › Autostart in the host client and turn it on for the migrated VM, at position %d.", r.Autostart))))
 		}
 	}
 	raw, e := a.Host.ReadFile(ctx, r.SourceVMX)
@@ -315,7 +326,7 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 		// Live, the snapshot delta of such a disk is copied under its own name
 		// and attaches to its parent by that name, so the disk must keep it.
 		if req.Live && renamedOutside {
-			r.check("Disks from other folders", statusBlock, "A disk from another folder is renamed in the target folder, which shutting down only at the end does not support")
+			r.check("Disks from other folders", statusBlock, "A disk from another folder is renamed in the target folder, which keeping the VM running during the copy does not support")
 		}
 		dirs := []string{}
 		for d := range outside {

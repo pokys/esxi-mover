@@ -78,7 +78,7 @@ func blockAdvice(r *Report, name, detail string) advice {
 	case "Disks from other folders":
 		return advise("A renamed disk needs the VM off",
 			"While the VM runs, it writes into a snapshot delta next to each disk. That delta finds its disk by name, so a disk that gets a new name in the target folder would lose its changes.",
-			say("Turn off Shut down only at the end, so the VM is shut down before the copy starts."),
+			say("Turn off Keep the VM running during the copy, so the VM is shut down before the copy starts."),
 			say("Or rename the disk on the source first, with the VM off, so that nothing in the source folder has its name."),
 			again())
 	case "Configuration files":
@@ -254,14 +254,14 @@ func diskLocationAdvice(r *Report, ref vmx.DiskRef, reason error, ds []esxi.Data
 	name := freeName(path.Base(full), taken)
 	if r.Request.BringDisks {
 		return detail + " on " + where + ": " + reason.Error(), advise(title,
-			"Bring disks from other folders is on, but this disk cannot be brought along, so the copy would still point at the original.",
+			"Include disks outside the VM folder is on, but this disk cannot be brought along, so the copy would still point at the original.",
 			say("Move the disk to a mounted VMFS-5 or VMFS-6 datastore, or detach it before the migration and attach it again afterwards."),
 			again())
 	}
 	return detail + " on " + where, advise(title,
 		"This tool copies the VM folder only. The disk would stay behind and the copy would still point at it, so two VMs could end up writing to the same disk.",
 		say("Choose one of the ways below. All of them need the VM shut down."),
-		say("Let this tool copy it: turn on Bring disks from other folders (experimental) and analyze again. The disk is copied into the target folder and the original stays where it is."),
+		say("Let this tool copy it: turn on Include disks outside the VM folder (experimental) and analyze again. The disk is copied into the target folder and the original stays where it is."),
 		say("To keep the disk where it is: in Edit settings remove the disk on "+device+" without deleting it from the datastore, and migrate without starting the VM. Then add it back to the migrated VM as an existing hard disk on "+device+" and start it."),
 		command("To bring the disk along: copy it into the VM folder. The source datastore needs room for it.", "vmkfstools -i "+esxi.Quote(full)+" "+esxi.Quote(path.Join(r.SourceDir, name))+" -d thin"),
 		say("Then in Edit settings remove the old disk on "+device+" without deleting it, add "+name+" as an existing hard disk on "+device+", and check that the VM starts. Delete the old disk only after the migrated VM is verified."),

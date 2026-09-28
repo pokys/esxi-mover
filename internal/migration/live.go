@@ -294,7 +294,7 @@ func (e *Engine) live(ctx context.Context, j *Job) (err error) {
 		} else if verr := e.merged(ctx, dst, r.TargetVMX, diskNames(r.Disks, nil)); verr != nil {
 			warning = verr.Error()
 		}
-		message = "Completed. The VM was down only while the changes were copied. No source VM files were deleted."
+		message = "Completed. The VM was down only while the changes were copied. No source VM files were deleted." + autostartNote(r)
 	}
 	if err = e.Host.Finish(ctx, r.ID); err != nil {
 		return fmt.Errorf("migration finished but transient lock archive failed; manual review required: %w", err)
