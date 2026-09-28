@@ -209,6 +209,19 @@ func vmxAdvice(r *Report, detail string) advice {
 	return advice{}
 }
 
+// toolsAdvice explains a running VM without VMware Tools: the migration still
+// works, but the shutdown it needs will wait for the operator.
+func toolsAdvice(live bool) advice {
+	when, meanwhile := "before anything is copied", "Nothing is copied or changed until the VM is off."
+	if live {
+		when, meanwhile = "after the copy, at the end", "Until then the VM keeps running on the migration's own snapshot; Stop merges it back and leaves the VM running."
+	}
+	return advise("The VM cannot be shut down automatically",
+		"A graceful shutdown goes through VMware Tools in the guest. Without it the migration pauses "+when+" and waits for you. "+meanwhile,
+		say("Install or start VMware Tools in the guest and analyze again, or plan to shut the guest down yourself when the migration asks."),
+		say("When it waits, shut the guest down from its own console and choose I shut the VM down manually. Force Power Off is like pulling the plug and can lose data the guest had not written yet."))
+}
+
 // diskLocationAdvice names the disk that is not directly in the VM folder and
 // says where it is. There are two ways out: leave the disk where it is and
 // detach it for the migration, or copy it into the VM folder first.

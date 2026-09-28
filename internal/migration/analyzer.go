@@ -138,6 +138,19 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 	if req.Live && r.Power != esxi.On {
 		r.check("Shut down at the end", statusBlock, "The VM is already off, so there is nothing to shut down at the end; turn the option off")
 	}
+	// A graceful shutdown needs VMware Tools. Without it the migration does not
+	// fail, it waits for the operator, so say so up front instead of blocking.
+	if r.Power == esxi.On {
+		running, e := a.Host.ToolsRunning(ctx, req.VMID)
+		switch {
+		case e != nil:
+			r.advised("VMware Tools", statusWarning, "The VMware Tools status could not be read", toolsAdvice(req.Live))
+		case !running:
+			r.advised("VMware Tools", statusWarning, "VMware Tools is not running in the guest", toolsAdvice(req.Live))
+		default:
+			r.check("VMware Tools", statusOK, "Running; the guest is shut down gracefully")
+		}
+	}
 	raw, e := a.Host.ReadFile(ctx, r.SourceVMX)
 	if e != nil {
 		return r, e

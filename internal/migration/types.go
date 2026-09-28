@@ -38,6 +38,7 @@ type Host interface {
 	Allocated(context.Context, string) (int64, error)
 	Power(context.Context, int) (esxi.Power, error)
 	Snapshot(context.Context, int) (string, error)
+	ToolsRunning(context.Context, int) (bool, error)
 	Shutdown(context.Context, int) error
 	ForceOff(context.Context, int) error
 	VerifyChain(context.Context, string) error

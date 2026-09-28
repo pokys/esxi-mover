@@ -48,6 +48,32 @@ func (c *Client) Power(ctx context.Context, id int) (Power, error) {
 func (c *Client) Snapshot(ctx context.Context, id int) (string, error) {
 	return c.command(ctx, "snapshot-state", "vim-cmd", "vmsvc/snapshot.get", strconv.Itoa(id))
 }
+
+var toolsRunning = regexp.MustCompile(`(?m)^\s*toolsRunningStatus\s*=\s*"([^"\r\n]*)"`)
+
+// ParseToolsRunning reads whether VMware Tools runs in the guest, which a
+// graceful shutdown needs. Anything but one known value is an error, so an
+// unexpected answer is never read as either yes or no.
+func ParseToolsRunning(s string) (bool, error) {
+	m := toolsRunning.FindAllStringSubmatch(s, -1)
+	if len(m) != 1 {
+		return false, fmt.Errorf("unknown VMware Tools status")
+	}
+	switch m[0][1] {
+	case "guestToolsRunning", "guestToolsExecutingScripts":
+		return true, nil
+	case "guestToolsNotRunning":
+		return false, nil
+	}
+	return false, fmt.Errorf("unknown VMware Tools status")
+}
+func (c *Client) ToolsRunning(ctx context.Context, id int) (bool, error) {
+	s, e := c.command(ctx, "tools-status", "vim-cmd", "vmsvc/get.guest", strconv.Itoa(id))
+	if e != nil {
+		return false, e
+	}
+	return ParseToolsRunning(s)
+}
 func (c *Client) Shutdown(ctx context.Context, id int) error {
 	_, e := c.command(ctx, "graceful-shutdown", "vim-cmd", "vmsvc/power.shutdown", strconv.Itoa(id))
 	return e

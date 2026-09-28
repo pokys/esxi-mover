@@ -34,6 +34,7 @@ type fakeHost struct {
 	lastAnswer                                                                                                         string
 	pollErrors                                                                                                         int
 	snapshotFail, foreignSnapshot, cloneHangs, cloneStopped                                                            bool
+	noTools, toolsUnknown                                                                                              bool
 }
 
 const sourceDir = "/vmfs/volumes/source/lab"
@@ -154,6 +155,14 @@ func (h *fakeHost) Snapshot(_ context.Context, id int) (string, error) {
 		return h.targetSnapshot, nil
 	}
 	return h.snapshot, nil
+}
+func (h *fakeHost) ToolsRunning(context.Context, int) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.toolsUnknown {
+		return false, fmt.Errorf("unknown VMware Tools status")
+	}
+	return !h.noTools, nil
 }
 func (h *fakeHost) Shutdown(_ context.Context, id int) error {
 	h.mu.Lock()
