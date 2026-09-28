@@ -39,17 +39,42 @@ func requireLiveSourceSpace(free int64) error {
 	return nil
 }
 
+// liveSourceFree is the least free space on any datastore a delta grows on:
+// the VM's own, and that of every disk from another folder, whose delta ESXi
+// writes next to it.
 func (e *Engine) liveSourceFree(ctx context.Context, r Report) (int64, error) {
 	ds, err := e.Host.Datastores(ctx)
 	if err != nil {
 		return 0, err
 	}
-	for _, d := range ds {
-		if strings.HasPrefix(r.SourceVMX, path.Join("/vmfs/volumes", d.UUID)+"/") && d.Mounted && esxi.SupportedVMFS(d.Type) {
-			return d.Free, nil
+	return deltaFree(ds, deltaPlaces(r))
+}
+func deltaPlaces(r Report) []string {
+	places := []string{r.SourceVMX}
+	for _, d := range r.Disks {
+		if d.External {
+			places = append(places, d.Source)
 		}
 	}
-	return 0, fmt.Errorf("source datastore is no longer available as mounted VMFS")
+	return places
+}
+func deltaFree(ds []esxi.Datastore, places []string) (int64, error) {
+	least := int64(-1)
+	for _, p := range places {
+		found := false
+		for _, d := range ds {
+			if strings.HasPrefix(p, path.Join("/vmfs/volumes", d.UUID)+"/") && d.Mounted && esxi.SupportedVMFS(d.Type) {
+				found = true
+				if least < 0 || d.Free < least {
+					least = d.Free
+				}
+			}
+		}
+		if !found {
+			return 0, fmt.Errorf("a datastore holding a snapshot delta is no longer available as mounted VMFS")
+		}
+	}
+	return least, nil
 }
 
 // errRestored is a failure after which the source was put back as it was.
@@ -216,10 +241,11 @@ func (e *Engine) live(ctx context.Context, j *Job) (err error) {
 		}
 		names[d.Key] = path.Base(dl.descriptor)
 	}
-	for _, f := range meta {
-		if err = e.Host.CopyToTarget(ctx, f, r.TargetDir); err != nil {
-			return err
-		}
+	if err = e.Host.CopyToTarget(ctx, meta.vmsn, r.TargetDir); err != nil {
+		return err
+	}
+	if err = e.Host.WriteTarget(ctx, r.TargetDir, path.Base(meta.vmsd), []byte(meta.target)); err != nil {
+		return err
 	}
 	j.phase(phaseVerifyingConfig, "Writing the target configuration and verifying disks, changes and metadata")
 	config := r.TargetConfig.Clone()
@@ -281,6 +307,14 @@ func (e *Engine) live(ctx context.Context, j *Job) (err error) {
 		s.SourcePower = "Powered off"
 		if warning != "" {
 			s.Error = "The target's temporary snapshot " + name + " could not be merged (" + warning + "). Consolidate it in Host Client."
+			// The VMSN keeps the configuration from the moment of the snapshot,
+			// with the full source path of every disk from another folder.
+			for _, d := range r.Disks {
+				if d.External {
+					s.Error += " Never revert to it: its saved configuration still names the source disk " + d.Source + "."
+					break
+				}
+			}
 		}
 	})
 	return nil
@@ -336,14 +370,20 @@ func (e *Engine) liveDeltas(ctx context.Context, r Report, name string) (map[str
 	}
 	out := map[string]delta{}
 	for _, d := range r.Disks {
+		// ESXi 6.5 writes a delta next to its parent. For a disk from another
+		// folder that is that folder, and the VMX names the delta by its full
+		// path; nothing else is accepted.
+		dir := path.Dir(d.Source)
 		file := cfg[d.Key]
-		if path.IsAbs(file) && path.Dir(file) == r.SourceDir {
+		if path.IsAbs(file) && path.Dir(file) == dir && (d.External || dir == r.SourceDir) {
 			file = path.Base(file)
+		} else if d.External {
+			file = ""
 		}
 		if file == "" || file != path.Base(file) || file == path.Base(d.Source) || esxi.ValidPath(file) != nil {
 			return nil, fmt.Errorf("the VM does not run on a snapshot delta for %s", d.Key)
 		}
-		p := path.Join(r.SourceDir, file)
+		p := path.Join(dir, file)
 		text, err := e.Host.ReadFile(ctx, p)
 		if err != nil {
 			return nil, err
@@ -360,7 +400,26 @@ func (e *Engine) liveDeltas(ctx context.Context, r Report, name string) (map[str
 		if extent != path.Base(extent) || esxi.ValidPath(extent) != nil {
 			return nil, fmt.Errorf("the snapshot delta for %s has an unexpected extent", d.Key)
 		}
-		out[d.Key] = delta{p, path.Join(r.SourceDir, extent)}
+		out[d.Key] = delta{p, path.Join(dir, extent)}
+	}
+	// Every delta lands in the one target folder under its own name, so no two
+	// may share a name, and none may take a name the target already uses.
+	taken := map[string]bool{strings.ToLower(path.Base(r.TargetVMX)): true}
+	for _, d := range r.Disks {
+		taken[strings.ToLower(path.Base(d.Target))] = true
+		taken[strings.ToLower(strings.TrimSuffix(path.Base(d.Target), ".vmdk")+"-flat.vmdk")] = true
+	}
+	for _, f := range r.ConfigFiles {
+		taken[strings.ToLower(f.Name)] = true
+	}
+	for _, d := range r.Disks {
+		for _, f := range []string{out[d.Key].descriptor, out[d.Key].extent} {
+			n := strings.ToLower(path.Base(f))
+			if taken[n] {
+				return nil, fmt.Errorf("the snapshot delta %s would collide with another file in the target folder", path.Base(f))
+			}
+			taken[n] = true
+		}
 	}
 	return out, nil
 }
@@ -406,49 +465,82 @@ func (e *Engine) ownSnapshotOnly(ctx context.Context, id int, name string) error
 	return nil
 }
 
-// liveMetadata returns the snapshot metadata that goes with the deltas: the
-// VMSD, which must describe only the job's snapshot, and its VMSN.
-func (e *Engine) liveMetadata(ctx context.Context, r Report, name string) ([]string, error) {
+// snapshotMeta is the snapshot metadata that goes with the deltas: the VMSD,
+// which must describe only the job's snapshot, and its VMSN. target is the
+// VMSD as the target folder gets it: a disk from another folder is named there
+// by its full source path, and on the target it must name the copy instead,
+// or the target's snapshot would lead back to the source disk.
+type snapshotMeta struct{ vmsd, vmsn, target string }
+
+func (e *Engine) liveMetadata(ctx context.Context, r Report, name string) (snapshotMeta, error) {
 	files, err := e.Host.List(ctx, r.SourceDir)
 	if err != nil {
-		return nil, err
+		return snapshotMeta{}, err
 	}
 	want := strings.TrimSuffix(path.Base(r.SourceVMX), path.Ext(r.SourceVMX)) + ".vmsd"
 	vmsd := ""
 	for _, f := range files {
 		if strings.EqualFold(path.Ext(f), ".vmsd") {
 			if vmsd != "" || path.Base(f) != want {
-				return nil, fmt.Errorf("unexpected snapshot metadata file %s", path.Base(f))
+				return snapshotMeta{}, fmt.Errorf("unexpected snapshot metadata file %s", path.Base(f))
 			}
 			vmsd = f
 		}
 	}
 	if vmsd == "" {
-		return nil, fmt.Errorf("the snapshot metadata file is missing")
+		return snapshotMeta{}, fmt.Errorf("the snapshot metadata file is missing")
 	}
 	text, err := e.Host.ReadFile(ctx, vmsd)
 	if err != nil {
-		return nil, err
+		return snapshotMeta{}, err
 	}
 	c, err := vmx.Parse(text)
 	if err != nil {
-		return nil, err
+		return snapshotMeta{}, err
 	}
 	vmsn := c["snapshot0.filename"]
 	if c["snapshot.numsnapshots"] != "1" || c["snapshot0.displayname"] != name || c["snapshot0.numdisks"] != strconv.Itoa(len(r.Disks)) ||
 		vmsn != path.Base(vmsn) || !strings.EqualFold(path.Ext(vmsn), ".vmsn") || esxi.ValidPath(vmsn) != nil {
-		return nil, fmt.Errorf("the snapshot metadata does not describe exactly this job's snapshot")
+		return snapshotMeta{}, fmt.Errorf("the snapshot metadata does not describe exactly this job's snapshot")
 	}
-	bases := map[string]bool{}
-	for _, d := range r.Disks {
-		bases[path.Base(d.Source)] = true
-	}
+	// Each disk must be named as ESXi names it: a disk in the VM folder by its
+	// file name, a disk from another folder by its full path, which is then
+	// rewritten to the name of its copy in the target folder.
+	target := text
+	used := map[string]bool{}
 	for i := range r.Disks {
-		if !bases[c[fmt.Sprintf("snapshot0.disk%d.filename", i)]] {
-			return nil, fmt.Errorf("the snapshot metadata names an unexpected disk")
+		v := c[fmt.Sprintf("snapshot0.disk%d.filename", i)]
+		found := false
+		for _, d := range r.Disks {
+			if used[d.Key] {
+				continue
+			}
+			if !d.External && v == path.Base(d.Source) {
+				found = true
+			} else if d.External && (v == d.Source || v == r.Config[d.Key]) {
+				found = true
+				target = strings.ReplaceAll(target, "\""+v+"\"", "\""+path.Base(d.Target)+"\"")
+			}
+			if found {
+				used[d.Key] = true
+				break
+			}
+		}
+		if !found {
+			return snapshotMeta{}, fmt.Errorf("the snapshot metadata names an unexpected disk")
 		}
 	}
-	return []string{vmsd, path.Join(r.SourceDir, vmsn)}, nil
+	// What the target gets must name nothing outside the target folder.
+	rewritten, err := vmx.Parse(target)
+	if err != nil {
+		return snapshotMeta{}, err
+	}
+	for i := range r.Disks {
+		if v := rewritten[fmt.Sprintf("snapshot0.disk%d.filename", i)]; v == "" || v != path.Base(v) {
+			return snapshotMeta{}, fmt.Errorf("the target snapshot metadata would still name a disk outside the target folder")
+		}
+	}
+	return snapshotMeta{vmsd, path.Join(r.SourceDir, vmsn), target}, nil
 }
 
 // sameCID: a delta names its parent by CID, and the clone must keep it for the
@@ -484,11 +576,13 @@ func (e *Engine) verifyDelta(ctx context.Context, r Report, d delta) error {
 	return e.sameSize(ctx, d.extent, path.Join(r.TargetDir, path.Base(d.extent)))
 }
 
-func (e *Engine) verifyCopies(ctx context.Context, r Report, files []string) error {
-	for _, f := range files {
-		if err := e.sameSize(ctx, f, path.Join(r.TargetDir, path.Base(f))); err != nil {
-			return err
-		}
+func (e *Engine) verifyCopies(ctx context.Context, r Report, m snapshotMeta) error {
+	if err := e.sameSize(ctx, m.vmsn, path.Join(r.TargetDir, path.Base(m.vmsn))); err != nil {
+		return err
+	}
+	written, err := e.Host.ReadFile(ctx, path.Join(r.TargetDir, path.Base(m.vmsd)))
+	if err != nil || written != m.target {
+		return fmt.Errorf("the target snapshot metadata differs from what was written")
 	}
 	return nil
 }

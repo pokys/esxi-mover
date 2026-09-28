@@ -15,7 +15,8 @@ const otherDir = "/vmfs/volumes/other/data"
 // folder to the lab VM on scsi0:slot.
 func withExternal(h *fakeHost, slot int, name string) {
 	h.ds = append(h.ds, esxi.Datastore{Name: "other", UUID: "other", Mount: "/vmfs/volumes/other", Type: "VMFS-6", Mounted: true, Size: 100 << 30, Free: 80 << 30})
-	h.files[sourceDir+"/lab.vmx"] += fmt.Sprintf("scsi0:%d.present = \"TRUE\"\nscsi0:%d.fileName = \"[other] data/%s\"\n", slot, slot, name)
+	// A real host writes the full path of a disk from another datastore.
+	h.files[sourceDir+"/lab.vmx"] += fmt.Sprintf("scsi0:%d.present = \"TRUE\"\nscsi0:%d.fileName = \"%s/%s\"\n", slot, slot, otherDir, name)
 	stem := strings.TrimSuffix(name, ".vmdk")
 	h.files[otherDir+"/"+name] = strings.Replace(diskText(0, true), "d0-flat.vmdk", stem+"-flat.vmdk", 1)
 	h.sizes[otherDir+"/"+stem+"-flat.vmdk"] = 1 << 30
@@ -98,14 +99,66 @@ func TestBringDisksCopiesIntoTheTargetFolder(t *testing.T) {
 	}
 }
 
-func TestBringDisksNeedsTheVMOff(t *testing.T) {
+// Live, the delta of a disk from another folder lies next to that disk. It is
+// copied into the target folder, and the target's snapshot list names the
+// copy, never the source disk, so merging on the target cannot reach the source.
+func TestLiveBringsDisksFromOtherFolders(t *testing.T) {
+	for _, mode := range []string{modeCopy, modeMove} {
+		t.Run(mode, func(t *testing.T) {
+			h := newFake(1)
+			h.power[7] = esxi.On
+			withExternal(h, 1, "data.vmdk")
+			r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: mode, PowerOn: mode == modeMove, Live: true, BringDisks: true})
+			if e != nil || !r.Ready {
+				t.Fatalf("live analysis blocked: %v %+v", e, r.Checks)
+			}
+			j := NewJob(r)
+			(&Engine{h, testOptions()}).Run(context.Background(), j)
+			if s := j.Snapshot(); s.Phase != phaseCompleted || s.Error != "" {
+				t.Fatalf("live migration failed: %s %s", s.Phase, s.Error)
+			}
+			if eventIndex(h, "copy:data-000001.vmdk") < eventIndex(h, "shutdown") || eventIndex(h, "copy:data-000001-sesparse.vmdk") < 0 {
+				t.Fatalf("the outside delta was not copied after the shutdown: %v", h.events)
+			}
+			for f, text := range h.files {
+				if strings.HasPrefix(f, "/vmfs/volumes/target/") && strings.Contains(text, otherDir) {
+					t.Fatalf("%s on the target still names the source disk:\n%s", f, text)
+				}
+			}
+			if cfg := h.files["/vmfs/volumes/target/lab/lab.vmx"]; !strings.Contains(cfg, "\"data.vmdk\"") || strings.Contains(cfg, "000001") {
+				t.Fatalf("the target does not run on its merged copy: %s", cfg)
+			}
+		})
+	}
+}
+
+// A delta finds its parent by file name, so a disk renamed in the target
+// folder cannot be migrated live.
+func TestLiveBlocksARenamedOutsideDisk(t *testing.T) {
+	h := newFake(1)
+	h.power[7] = esxi.On
+	withExternal(h, 1, "d0.vmdk")
+	r := bring(t, h, true)
+	requireAdvice(t, r)
+	blocked := false
+	for _, c := range find(r, "Disks from other folders") {
+		blocked = blocked || c.Status == statusBlock
+	}
+	if r.Ready || !blocked {
+		t.Fatalf("a renamed outside disk was accepted live: %+v", r.Checks)
+	}
+}
+
+// The delta of a disk from another folder grows on that disk's datastore, so
+// its free space counts as much as the VM's own.
+func TestLiveNeedsSpaceWhereEveryDeltaGrows(t *testing.T) {
 	h := newFake(1)
 	h.power[7] = esxi.On
 	withExternal(h, 1, "data.vmdk")
+	h.ds[2].Free = 100 << 20
 	r := bring(t, h, true)
-	requireAdvice(t, r)
-	if r.Ready || len(find(r, "Disks from other folders")) != 2 {
-		t.Fatalf("live migration with an outside disk was not blocked: %+v", r.Checks)
+	if r.Ready || reportStatus(r, "Source free space") != statusBlock {
+		t.Fatalf("a nearly full datastore under an outside disk was accepted: %+v", r.Checks)
 	}
 }
 

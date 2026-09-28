@@ -76,9 +76,10 @@ func blockAdvice(r *Report, name, detail string) advice {
 			say("Open Snapshots in the host client and choose Delete all or Consolidate."),
 			again())
 	case "Disks from other folders":
-		return advise("Disks from other folders need the VM off",
-			"While the VM runs, ESXi writes a snapshot for every disk. For a disk outside the VM folder, that snapshot and its merge back have never been verified on a real host.",
+		return advise("A renamed disk needs the VM off",
+			"While the VM runs, it writes into a snapshot delta next to each disk. That delta finds its disk by name, so a disk that gets a new name in the target folder would lose its changes.",
 			say("Turn off Shut down only at the end, so the VM is shut down before the copy starts."),
+			say("Or rename the disk on the source first, with the VM off, so that nothing in the source folder has its name."),
 			again())
 	case "Configuration files":
 		return advise("Unexpected NVRAM or VMXF file",

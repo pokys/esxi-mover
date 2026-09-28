@@ -97,8 +97,10 @@ func (c *Client) WriteTarget(ctx context.Context, dir, name string, data []byte)
 	if name != path.Base(name) || ValidPath(name) != nil {
 		return fmt.Errorf("invalid target config name")
 	}
+	// A live migration writes the snapshot list too, with the paths of disks
+	// from other folders rewritten to the copies in the target folder.
 	switch strings.ToLower(path.Ext(name)) {
-	case ".vmx", ".nvram", ".vmxf":
+	case ".vmx", ".nvram", ".vmxf", ".vmsd":
 	default:
 		return fmt.Errorf("only configuration files may be written")
 	}

@@ -83,7 +83,9 @@ func TestLiveMoveCopiesOnlyTheChanges(t *testing.T) {
 	if shutdown < eventIndex(h, "clone:1") {
 		t.Fatalf("the source went down before its disks were cloned: %v", h.events)
 	}
-	for _, f := range []string{"copy:d0-000001.vmdk", "copy:d1-000001-sesparse.vmdk", "copy:lab.vmsd", "copy:lab-Snapshot1.vmsn"} {
+	// The VMSD is written rather than copied, so a disk from another folder
+	// can be renamed to its copy; here it names only local disks.
+	for _, f := range []string{"copy:d0-000001.vmdk", "copy:d1-000001-sesparse.vmdk", "config:lab.vmsd", "copy:lab-Snapshot1.vmsn"} {
 		if i := eventIndex(h, f); i < shutdown || i > eventIndex(h, "register:"+targetVMX) {
 			t.Fatalf("%s not copied during the cutover: %v", f, h.events)
 		}

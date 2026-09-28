@@ -212,6 +212,7 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 		sourceNames[path.Base(f)] = true
 	}
 	outside := map[string][]string{} // folder -> disks brought in from it
+	renamedOutside := false
 	for _, ref := range configAnalysis.Disks {
 		src, e := a.localFile(ctx, ref.File, r.SourceDir, inv.Datastores)
 		external := false
@@ -239,10 +240,14 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 			renamed := ""
 			if name != path.Base(src) {
 				renamed = " as " + name
+				renamedOutside = true
+			}
+			why := "Experimental. The original is only read and stays where it is. After the migration nothing registered uses it any more; it keeps its space until you delete it."
+			if req.Live {
+				why += " While the VM runs, its changes to this disk go into a snapshot delta next to the original, so that datastore needs free space too."
 			}
 			r.advised("Disks from other folders", statusWarning, strings.TrimSuffix(ref.Key, ".filename")+": "+ref.File+" is copied into the target folder"+renamed, advise("A disk is brought in from another folder",
-				"Experimental. The original is only read and stays where it is. After the migration nothing registered uses it any more; it keeps its space until you delete it.",
-				say("Delete the original only after the migrated VM is verified.")))
+				why, say("Delete the original only after the migrated VM is verified.")))
 		}
 		extentName := strings.TrimSuffix(name, path.Ext(name)) + "-flat.vmdk"
 		if destNames[name] || destNames[extentName] {
@@ -307,8 +312,10 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 		r.check("Disks", statusBlock, "No safe disks found")
 	}
 	if len(outside) > 0 {
-		if req.Live {
-			r.check("Disks from other folders", statusBlock, "Disks from other folders are only copied with the VM shut down at the start")
+		// Live, the snapshot delta of such a disk is copied under its own name
+		// and attaches to its parent by that name, so the disk must keep it.
+		if req.Live && renamedOutside {
+			r.check("Disks from other folders", statusBlock, "A disk from another folder is renamed in the target folder, which shutting down only at the end does not support")
 		}
 		dirs := []string{}
 		for d := range outside {
@@ -430,9 +437,15 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 	// While the base disks are cloned, the guest writes into a snapshot delta
 	// on the source datastore. A full datastore would stop the running VM.
 	if req.Live {
-		if err := requireLiveSourceSpace(source.Free); err != nil {
-			r.check("Source free space", statusBlock, err.Error())
-		} else if source.Free < r.Provisioned/10+minLiveSourceFree {
+		// Deltas grow on the VM's datastore and next to every disk from
+		// another folder, so the tightest of those datastores counts.
+		free, ferr := deltaFree(inv.Datastores, deltaPlaces(r))
+		if ferr == nil {
+			ferr = requireLiveSourceSpace(free)
+		}
+		if ferr != nil {
+			r.check("Source free space", statusBlock, ferr.Error())
+		} else if free < r.Provisioned/10+minLiveSourceFree {
 			r.check("Source free space", statusWarning, "Little room on the source datastore for changes written during the copy; a full datastore stops the VM")
 		}
 	}

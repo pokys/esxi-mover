@@ -223,6 +223,10 @@ func (h *fakeHost) WriteTarget(_ context.Context, dir, name string, data []byte)
 		return fmt.Errorf("attempted source write")
 	}
 	h.files[path.Join(dir, name)] = string(data)
+	if strings.HasSuffix(name, ".vmsd") {
+		// A VM registered from the written metadata sees the same tree.
+		h.targetSnapshot = h.snapshot
+	}
 	if h.corruptConfig && strings.HasSuffix(name, ".vmx") {
 		h.files[path.Join(dir, name)] += "broken"
 	}
@@ -365,6 +369,22 @@ func (h *fakeHost) CreateSnapshot(_ context.Context, id int, name string) error 
 		h.sizes[fmt.Sprintf("%s/d%d-000001-sesparse.vmdk", dir, n)] = 4 << 20
 		vmsd += fmt.Sprintf("snapshot0.disk%d.fileName = \"d%d.vmdk\"\n", n, n)
 	}
+	// As observed on ESXi 6.5: a disk named by its full path gets its delta
+	// next to it, the VMX names the delta by full path, the delta names its
+	// parent by file name, and the VMSD keeps the parent's full path.
+	for _, line := range strings.Split(h.files[p], "\n") {
+		k, v, ok := strings.Cut(line, " = ")
+		v = strings.Trim(v, "\"")
+		if !ok || !strings.HasSuffix(strings.ToLower(k), ".filename") || !strings.HasPrefix(v, "/vmfs/volumes/") || !strings.HasSuffix(v, ".vmdk") {
+			continue
+		}
+		stem := strings.TrimSuffix(v, ".vmdk")
+		cfg = strings.Replace(cfg, "\""+v+"\"", "\""+stem+"-000001.vmdk\"", 1)
+		h.files[stem+"-000001.vmdk"] = fmt.Sprintf("version=1\nCID=5678abcd\nparentCID=1234abcd\ncreateType=\"seSparse\"\nparentFileNameHint=\"%s\"\nRW 2097152 SESPARSE \"%s-000001-sesparse.vmdk\"\n", path.Base(v), path.Base(stem))
+		h.sizes[stem+"-000001-sesparse.vmdk"] = 4 << 20
+		vmsd += fmt.Sprintf("snapshot0.disk%d.fileName = \"%s\"\n", n, v)
+		n++
+	}
 	h.files[p] = cfg
 	h.files[dir+"/lab.vmsd"] = vmsd + fmt.Sprintf("snapshot0.numDisks = \"%d\"\n", n)
 	h.sizes[dir+"/lab-Snapshot1.vmsn"] = 32 << 10
@@ -392,13 +412,20 @@ func (h *fakeHost) ConsolidateOwnSnapshot(_ context.Context, id int, name string
 	}
 	dir := path.Dir(p)
 	h.files[p] = strings.ReplaceAll(h.files[p], "-000001.vmdk\"", ".vmdk\"")
+	// A source merge also removes deltas next to disks in other folders.
+	ours := func(k string) bool {
+		if target {
+			return path.Dir(k) == dir
+		}
+		return !strings.HasPrefix(k, "/vmfs/volumes/target/")
+	}
 	for k := range h.files {
-		if path.Dir(k) == dir && strings.Contains(k, "-000001") {
+		if ours(k) && strings.Contains(k, "-000001") {
 			delete(h.files, k)
 		}
 	}
 	for k := range h.sizes {
-		if path.Dir(k) == dir && (strings.Contains(k, "-000001") || strings.HasSuffix(k, ".vmsn")) {
+		if (ours(k) && strings.Contains(k, "-000001")) || (path.Dir(k) == dir && strings.HasSuffix(k, ".vmsn")) {
 			delete(h.sizes, k)
 		}
 	}

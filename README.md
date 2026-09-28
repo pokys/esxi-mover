@@ -73,7 +73,13 @@ target folder, wherever it lies; a name already taken gets a suffix, such as
 `data_1.vmdk`, and the target VMX points at it. The originals are only read and
 stay where they are. The folder each such disk lies in is checked as well:
 snapshot files of that disk, or another VMX there that uses it, stop the
-migration. It works only with the VM shut down at the start.
+migration.
+
+Together with *Shut down only at the end*, the delta of such a disk grows next
+to it, so that datastore needs the same 1 GiB free. The delta is copied into
+the target folder and the target's snapshot list is rewritten to name the copy,
+never the source disk. A disk that has to be renamed in the target folder
+cannot be migrated this way, because its delta finds it by name.
 
 ## What it refuses
 
