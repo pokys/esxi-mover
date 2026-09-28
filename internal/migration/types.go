@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"esxi-mover/internal/esxi"
@@ -66,7 +67,23 @@ type Request struct {
 	// Live keeps the VM running while its disks are copied (experimental).
 	Live bool
 }
-type Check struct{ Name, Status, Detail string }
+
+// Check is one safety check. A blocking check also carries a plain-language
+// Title, Why it is a problem, and the Steps that clear it; Detail stays a single
+// line so it reads in error messages too.
+type Check struct {
+	Name, Status, Detail string
+	Title                string `json:",omitempty"`
+	Why                  string `json:",omitempty"`
+	Steps                []Step `json:",omitempty"`
+}
+
+// Step is one thing the operator does. Command, when set, is a complete shell
+// command for the ESXi host, with real paths, safe to paste as is.
+type Step struct {
+	Text    string
+	Command string `json:",omitempty"`
+}
 type Disk struct {
 	Key, Source, Target, Extent string
 	Provisioned, Allocated      int64
@@ -90,10 +107,29 @@ type Report struct {
 }
 
 func (r *Report) check(name, status, detail string) {
-	r.Checks = append(r.Checks, Check{name, status, detail})
+	a := advice{}
+	if status == statusBlock {
+		a = blockAdvice(r, name, detail)
+	}
+	r.advised(name, status, detail, a)
+}
+func (r *Report) advised(name, status, detail string, a advice) {
 	if status == statusBlock {
 		r.Ready = false
 	}
+	// One problem found under several keys (ctkEnabled and every
+	// scsiX:Y.ctkEnabled) is one row with the keys listed, not a row per key.
+	if a.title != "" {
+		prefix, key, split := strings.Cut(detail, ": ")
+		for i := range r.Checks {
+			c := &r.Checks[i]
+			if c.Name == name && c.Status == status && c.Title == a.title && split && strings.HasPrefix(c.Detail, prefix+": ") {
+				c.Detail += ", " + key
+				return
+			}
+		}
+	}
+	r.Checks = append(r.Checks, Check{Name: name, Status: status, Detail: detail, Title: a.title, Why: a.why, Steps: a.steps})
 }
 func NewID() string {
 	var b [16]byte

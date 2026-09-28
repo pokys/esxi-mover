@@ -47,14 +47,17 @@ func DiskSnapshot(file string, d vmdk.Descriptor) error {
 	}
 	return nil
 }
-func SnapshotFiles(files []string) error {
+
+// SnapshotArtifact returns the first snapshot or suspend file in the VM folder,
+// or "" when there is none.
+func SnapshotArtifact(files []string) string {
 	for _, f := range files {
 		n := strings.ToLower(path.Base(f))
 		if strings.HasSuffix(n, "-delta.vmdk") || strings.HasSuffix(n, "-sesparse.vmdk") || snapshotName.MatchString(n) || strings.HasSuffix(n, ".vmsn") || strings.HasSuffix(n, ".vmss") {
-			return fmt.Errorf("snapshot/suspend artifact %s needs manual review; orphan status cannot be proven", path.Base(f))
+			return path.Base(f)
 		}
 	}
-	return nil
+	return ""
 }
 func VMSD(s string) error {
 	if strings.TrimSpace(s) == "" {

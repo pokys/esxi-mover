@@ -73,10 +73,48 @@ function renderReport(d){
  const bad=d.Checks.filter(c=>c.Status!=='OK'), blocks=bad.filter(c=>c.Status==='BLOCK').length;
  $('checkSummary').textContent=blocks?blocks+' of '+d.Checks.length+' safety checks block this migration':bad.length?'Safe to start · '+bad.length+' warning'+(bad.length>1?'s':''):'All '+d.Checks.length+' safety checks passed';
  $('checkSummary').className='summary '+(blocks?'block':bad.length?'warning':'ok');
- $('problems').replaceChildren();bad.forEach(c=>{const el=text('div','','problem '+c.Status.toLowerCase());el.append(text('strong',c.Name),text('span',c.Detail));$('problems').append(el);});
+ renderIssues(bad.filter(c=>c.Status==='BLOCK').concat(bad.filter(c=>c.Status!=='BLOCK')), blocks>0);
  $('checks').replaceChildren();d.Checks.forEach(c=>{const tr=document.createElement('tr');tr.append(text('td',c.Name),text('td',c.Status,c.Status.toLowerCase()),text('td',c.Detail));$('checks').append(tr);});$('checkBox').open=false;
  $('disks').replaceChildren();(d.Disks||[]).forEach(disk=>{const el=text('div',base(disk.Source),'disk');el.append(text('small',size(disk.Provisioned)+' provisioned · '+(disk.AllocationKnown?size(disk.Allocated)+' used':'usage unknown, counting provisioned')+' · '+(disk.Thin?'thin':'thick')+' → thin'));$('disks').append(el);});
  $('destination').textContent=d.SourceDir+'  →  '+d.TargetDir;
+}
+// Problems read as one grouped list. Each row names the problem in plain words
+// with its reason underneath; a row with steps opens to show what to do, and
+// the first block starts open so the way forward is visible without a click.
+function renderIssues(list, blocked){
+ const root=$('problems');root.replaceChildren();
+ if(!list.length)return;
+ const box=text('div','','issues');
+ list.forEach((c,i)=>{
+  const steps=c.Steps||[], more=steps.length>0||Boolean(c.Why), open=i===0&&c.Status==='BLOCK'&&more;
+  const item=text('div','','issue is-'+c.Status.toLowerCase()+(open?' open':''));
+  const head=text(more?'button':'div','','issue-head');if(more)head.type='button';
+  const words=text('div','','issue-text');words.append(text('strong',c.Title||c.Name),text('span',c.Detail));
+  head.append(text('span','','issue-icon'),words);
+  item.append(head);
+  if(more){
+   head.append(text('span','›','chev'));head.setAttribute('aria-expanded',open);
+   head.addEventListener('click',()=>head.setAttribute('aria-expanded',item.classList.toggle('open')));
+   const body=text('div','','issue-body');
+   if(c.Why)body.append(text('h4','Why it matters'),text('p',c.Why,'why'));
+   if(steps.length){const ol=document.createElement('ol');steps.forEach(s=>{const li=text('li',s.Text);if(s.Command)li.append(commandLine(s.Command));ol.append(li);});body.append(text('h4','What to do'),ol);}
+   item.append(body);
+  }
+  box.append(item);
+ });
+ root.append(box);
+ if(blocked){const again=text('button','Analyze again','secondary');again.type='button';again.addEventListener('click',()=>$('analyzeForm').requestSubmit());const bar=text('div','','actions');bar.append(again);root.append(bar);}
+}
+// Plain HTTP on a LAN has no clipboard API, so fall back to selecting the
+// command for Ctrl+C, as the log copy does.
+function commandLine(cmd){
+ const line=text('div','','cmd'),code=text('code',cmd),copy=text('button','Copy');copy.type='button';
+ copy.addEventListener('click',async()=>{
+  try{await navigator.clipboard.writeText(cmd);copy.textContent='Copied';}
+  catch{getSelection().selectAllChildren(code);copy.textContent='Press Ctrl+C';}
+  setTimeout(()=>{copy.textContent='Copy';},2000);
+ });
+ line.append(code,copy);return line;
 }
 $('maintenance').addEventListener('change', updateStart);
 function showJob(j) {

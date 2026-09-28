@@ -86,9 +86,24 @@ footer{font-size:11px;color:var(--faint);text-align:center;margin:22px 0 4px}
 .arrow span{font-size:26px;line-height:1}
 .summary{border-radius:10px;padding:11px 14px;font-size:14px;font-weight:600;margin:12px 0 8px}
 .summary.ok{background:var(--ok-bg);color:var(--ok)}.summary.warning{background:var(--warn-bg);color:var(--warn)}.summary.block{background:var(--block-bg);color:var(--block)}
-.problem{border-left:3px solid;border-radius:6px;padding:8px 12px;margin:6px 0;background:var(--fill);font-size:13px}
-.problem.block{border-color:var(--block)}.problem.warning{border-color:var(--warn)}
-.problem strong{display:block;font-weight:600}.problem span{color:var(--muted);overflow-wrap:anywhere}
+.issues{background:var(--surface);border:1px solid var(--hair);border-radius:12px;overflow:hidden;margin:8px 0}
+.issue+.issue{border-top:1px solid var(--hair)}
+.issue-head{display:flex;align-items:center;gap:12px;width:100%;margin:0;padding:11px 14px;background:none;color:var(--fg);border-radius:0;text-align:left;font-weight:400;cursor:default}
+button.issue-head{cursor:pointer}button.issue-head:hover{background:var(--fill);filter:none}button.issue-head:focus-visible{outline:0;box-shadow:inset 0 0 0 3px var(--ring)}
+.issue-icon{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;font-size:12px;font-weight:700;flex-shrink:0}
+.issue.is-block .issue-icon{background:var(--block-bg);color:var(--block)}.issue.is-block .issue-icon::before{content:'✕'}
+.issue.is-warning .issue-icon{background:var(--warn-bg);color:var(--warn)}.issue.is-warning .issue-icon::before{content:'!'}
+.issue-text{flex:1;min-width:0}
+.issue-text strong{display:block;font-size:14px;font-weight:600;letter-spacing:-.01em}
+.issue-text span{display:block;font-size:12.5px;color:var(--muted);overflow-wrap:anywhere;margin-top:1px}
+.chev{color:var(--faint);font-size:20px;line-height:1;transition:transform .2s}.issue.open .chev{transform:rotate(90deg)}
+.issue-body{display:none;padding:2px 14px 14px 48px}.issue.open .issue-body{display:block}
+.issue-body h4{font-size:11px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.05em;margin:0 0 6px}
+.issue-body .why{font-size:13px;color:var(--fg);margin:0 0 14px;max-width:62ch}
+.issue-body ol{margin:0;padding-left:18px;font-size:13px;color:var(--fg)}.issue-body li{margin:0 0 9px;padding-left:2px}.issue-body li:last-child{margin-bottom:0}.issue-body li::marker{color:var(--faint);font-variant-numeric:tabular-nums}
+.cmd{display:flex;align-items:center;gap:8px;background:var(--fill);border-radius:8px;padding:5px 5px 5px 10px;margin-top:6px}
+.cmd code{flex:1;min-width:0;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12px;overflow-wrap:anywhere}
+.cmd button{margin:0;padding:4px 10px;font-size:12px;background:var(--surface);color:var(--accent);flex-shrink:0}
 #checkBox summary{margin-top:6px}
 .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.actions button{margin:0}
 .done{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin:-2px 0 6px}
@@ -114,4 +129,4 @@ footer{font-size:11px;color:var(--faint);text-align:center;margin:22px 0 4px}
 .stopbar{text-align:right;margin:-10px 0 10px}
 #stop{color:var(--faint);font-size:12px}#stop:hover{color:var(--block)}
 [hidden]{display:none!important}
-@media(max-width:680px){main{padding:14px 14px 22px}header{padding:10px 14px}.brand small{display:none}section{padding:16px}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.route{grid-template-columns:1fr}.end:last-child{text-align:left}.arrow{justify-items:start}.arrow span{transform:rotate(90deg)}.metric strong{font-size:14px}}
+@media(max-width:680px){main{padding:14px 14px 22px}header{padding:10px 14px}.brand small{display:none}section{padding:16px}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.route{grid-template-columns:1fr}.end:last-child{text-align:left}.arrow{justify-items:start}.arrow span{transform:rotate(90deg)}.metric strong{font-size:14px}.issue-body{padding-left:14px}}

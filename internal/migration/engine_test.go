@@ -610,7 +610,83 @@ func TestSnapshotLayersBlockAnalyze(t *testing.T) {
 			if e == nil && r.Ready {
 				t.Fatal("snapshot accepted")
 			}
+			requireAdvice(t, r)
 		})
+	}
+}
+
+// A suspend file left behind after a resume still blocks, but the check has to
+// tell the operator how to prove it orphaned and what to do then.
+func TestSuspendFileBlocksWithAdvice(t *testing.T) {
+	for name, tc := range map[string]struct {
+		change      func(*fakeHost)
+		want, avoid []string
+	}{
+		"left-over": {func(h *fakeHost) { h.power[7] = esxi.On; h.files[sourceDir+"/lab-1a2b.vmem"] = "memory" },
+			[]string{"Leftover suspend file", "vmkfstools -D '" + sourceDir + "/lab-1a2b.vmss'", "'" + sourceDir + "/lab-1a2b.vmem'", "_quarantine"}, nil},
+		"no-vmem":   {func(h *fakeHost) { h.power[7] = esxi.On }, []string{"Leftover suspend file"}, []string{".vmem"}},
+		"suspended": {func(h *fakeHost) { h.power[7] = esxi.Suspended }, []string{"Power the VM on"}, []string{"vmkfstools", "_quarantine"}},
+		"checkpoint": {func(h *fakeHost) {
+			h.files[sourceDir+"/lab.vmx"] += "checkpoint.vmState = \"lab-1a2b.vmss\"\n"
+		}, []string{"Power the VM on"}, []string{"vmkfstools", "_quarantine"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newFake(1)
+			h.files[sourceDir+"/lab-1a2b.vmss"] = "state"
+			tc.change(h)
+			r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY", PowerOn: false, TargetName: ""})
+			if e != nil {
+				t.Fatal(e)
+			}
+			if r.Ready || reportStatus(r, "Snapshot artifacts") != "BLOCK" {
+				t.Fatal("suspend file accepted")
+			}
+			shown := ""
+			for _, c := range r.Checks {
+				if c.Name == "Snapshot artifacts" {
+					if strings.Contains(c.Detail, "\n") {
+						t.Fatalf("detail is not one line: %q", c.Detail)
+					}
+					shown = c.Title
+					for _, s := range c.Steps {
+						shown += "\n" + s.Text + "\n" + s.Command
+					}
+				}
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(shown, w) {
+					t.Fatalf("advice lacks %q: %s", w, shown)
+				}
+			}
+			for _, w := range tc.avoid {
+				if strings.Contains(shown, w) {
+					t.Fatalf("advice has %q: %s", w, shown)
+				}
+			}
+		})
+	}
+}
+
+// CBT set on the VM and on every disk is one problem with one fix, so it shows
+// as one row that lists every key.
+func TestRepeatedProblemIsOneRow(t *testing.T) {
+	h := newFake(1)
+	h.files[sourceDir+"/lab.vmx"] += "ctkEnabled = \"TRUE\"\nscsi0:0.ctkEnabled = \"TRUE\"\n"
+	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	rows := []Check{}
+	for _, c := range r.Checks {
+		if c.Title == "Changed Block Tracking is on" {
+			rows = append(rows, c)
+		}
+	}
+	if r.Ready || len(rows) != 1 {
+		t.Fatalf("want one blocking CBT row, got %d: %+v", len(rows), rows)
+	}
+	if !strings.Contains(rows[0].Detail, "ctkenabled") || !strings.Contains(rows[0].Detail, "scsi0:0.ctkenabled") {
+		t.Fatalf("keys missing: %q", rows[0].Detail)
 	}
 }
 func TestUnsafeConfigurationsBlock(t *testing.T) {
@@ -629,6 +705,7 @@ func TestUnsafeConfigurationsBlock(t *testing.T) {
 			if e == nil && r.Ready {
 				t.Fatal("unsupported feature accepted")
 			}
+			requireAdvice(t, r)
 		})
 	}
 }
@@ -793,6 +870,24 @@ func TestSnapshotManagerOnRealHostOutput(t *testing.T) {
 	}
 }
 
+// requireAdvice fails when a blocking check leaves the operator without a
+// title and a next step, or when a command still holds a placeholder.
+func requireAdvice(t *testing.T, r Report) {
+	t.Helper()
+	for _, c := range r.Checks {
+		if c.Status != "BLOCK" {
+			continue
+		}
+		if c.Title == "" || c.Why == "" || len(c.Steps) == 0 {
+			t.Errorf("%s blocks without advice: %q", c.Name, c.Detail)
+		}
+		for _, s := range c.Steps {
+			if strings.ContainsAny(s.Command, "<>") && !strings.Contains(s.Command, "2>/dev/null") {
+				t.Errorf("%s has a placeholder command: %q", c.Name, s.Command)
+			}
+		}
+	}
+}
 func reportStatus(r Report, name string) string {
 	status := "MISSING"
 	for _, c := range r.Checks {

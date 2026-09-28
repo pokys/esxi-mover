@@ -166,8 +166,9 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 	if e != nil {
 		return r, e
 	}
-	if e = SnapshotFiles(files); e != nil {
-		r.check("Snapshot artifacts", statusBlock, e.Error())
+	if name := SnapshotArtifact(files); name != "" {
+		detail, a := artifactAdvice(&r, name, files)
+		r.advised("Snapshot artifacts", statusBlock, detail, a)
 	} else {
 		r.check("Snapshot artifacts", statusOK, "No delta, seSparse, numbered snapshot or suspend files")
 	}
