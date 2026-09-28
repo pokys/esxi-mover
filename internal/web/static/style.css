@@ -124,6 +124,12 @@ button.issue-head{cursor:pointer}button.issue-head:hover{background:var(--fill);
 .switch input{appearance:none;-webkit-appearance:none;width:38px;height:22px;margin:0;padding:0;border:0;border-radius:980px;background:var(--line);position:relative;cursor:pointer;flex-shrink:0;transition:background .2s}
 .switch input::after{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .2s}
 .switch input:checked{background:var(--ok)}.switch input:checked::after{transform:translateX(16px)}
+/* Options: a fixed description under each switch, the toggle beside the title. */
+.options{display:grid;gap:14px;margin:14px 0 4px}
+.options .switch{align-items:flex-start;margin:0}.options .switch input{margin-top:1px}
+.options .switch small{display:block;font-size:12px;color:var(--muted);margin-top:2px;line-height:1.4}
+.switch input:disabled{cursor:not-allowed;opacity:.45}.switch input:disabled+span{color:var(--muted);cursor:not-allowed}
+#modeHint{min-height:2.9em}
 #audit{background:none;border:0;box-shadow:none;padding:0 4px;margin:18px 0 0}
 #audit summary{color:var(--faint);font-size:12px;font-weight:400;margin:0}
 #audit summary:hover{color:var(--muted)}

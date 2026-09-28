@@ -51,16 +51,20 @@ const hints={
  liveMOVE:'The VM keeps running during the copy and is shut down only at the end. The target holds everything up to the shutdown and takes its place in the inventory.'
 };
 const bringHint=' Disks outside the VM folder are copied into the target folder too (experimental); the originals stay where they are.';
+// The hint under the operation names only its result, and every switch has a
+// fixed description, so nothing below moves while options are toggled.
+const modeHints={
+ COPY:'The copy holds everything up to the shutdown and is left unregistered; the source stays registered and off.',
+ MOVE:'The target holds everything up to the shutdown and takes the source\'s place in the inventory.'
+};
 function modeChanged(){
- const move=mode()==='MOVE',live=$('live').checked;
- show('moveOptions',move);
+ const move=mode()==='MOVE';
+ $('powerOn').disabled=!move;
  if(!move)$('powerOn').checked=false;
- $('modeHint').textContent=hints[(live?'live':'')+mode()]+($('bringDisks').checked?bringHint:'');
+ $('modeHint').textContent=modeHints[mode()];
 }
 modeChanged();
 for(const r of document.querySelectorAll('input[name=mode]'))r.addEventListener('change',()=>{modeChanged();report=null;show('analysis',false);});
-$('live').addEventListener('change',modeChanged);
-$('bringDisks').addEventListener('change',modeChanged);
 for(const id of ['vm','datastore','powerOn','live','bringDisks'])$(id).addEventListener('change',()=>{report=null;show('analysis',false);});
 $('targetName').addEventListener('input',()=>{report=null;show('analysis',false);});
 $('analyzeForm').addEventListener('submit',event=>{event.preventDefault();action(async()=>{report=null;show('analysis',false);const d=await api('analyze',{VMID:Number($('vm').value),TargetUUID:$('datastore').value,Mode:mode(),PowerOn:mode()==='MOVE'&&$('powerOn').checked,Live:$('live').checked,BringDisks:$('bringDisks').checked,TargetName:$('targetName').value});report=d;$('maintenance').checked=false;$('start').disabled=true;$('readyBadge').textContent=d.Ready?'Ready':'Blocked';$('readyBadge').className='badge '+(d.Ready?'ok':'block');renderReport(d);show('analysis');$('analysis').scrollIntoView({behavior:'smooth',block:'start'});},'Running the safety checks on ESXi');});
