@@ -50,15 +50,17 @@ const hints={
  liveCOPY:'The VM keeps running during the copy and is shut down only at the end, then stays off. The copy holds everything up to the shutdown and is left unregistered.',
  liveMOVE:'The VM keeps running during the copy and is shut down only at the end. The target holds everything up to the shutdown and takes its place in the inventory.'
 };
+const bringHint=' Disks outside the VM folder are copied into the target folder too (experimental); the originals stay where they are.';
 function modeChanged(){
  const move=mode()==='MOVE',live=$('live').checked;
  show('moveOptions',move);
  if(!move)$('powerOn').checked=false;
- $('modeHint').textContent=hints[(live?'live':'')+mode()];
+ $('modeHint').textContent=hints[(live?'live':'')+mode()]+($('bringDisks').checked?bringHint:'');
 }
 modeChanged();
 for(const r of document.querySelectorAll('input[name=mode]'))r.addEventListener('change',()=>{modeChanged();report=null;show('analysis',false);});
 $('live').addEventListener('change',modeChanged);
+$('bringDisks').addEventListener('change',modeChanged);
 for(const id of ['vm','datastore','powerOn','live','bringDisks'])$(id).addEventListener('change',()=>{report=null;show('analysis',false);});
 $('targetName').addEventListener('input',()=>{report=null;show('analysis',false);});
 $('analyzeForm').addEventListener('submit',event=>{event.preventDefault();action(async()=>{report=null;show('analysis',false);const d=await api('analyze',{VMID:Number($('vm').value),TargetUUID:$('datastore').value,Mode:mode(),PowerOn:mode()==='MOVE'&&$('powerOn').checked,Live:$('live').checked,BringDisks:$('bringDisks').checked,TargetName:$('targetName').value});report=d;$('maintenance').checked=false;$('start').disabled=true;$('readyBadge').textContent=d.Ready?'Ready':'Blocked';$('readyBadge').className='badge '+(d.Ready?'ok':'block');renderReport(d);show('analysis');$('analysis').scrollIntoView({behavior:'smooth',block:'start'});},'Running the safety checks on ESXi');});
@@ -68,7 +70,7 @@ function renderReport(d){
  $('fromStore').textContent=d.SourceDatastore;$('fromDir').textContent=base(d.SourceDir)+'/';
  $('toStore').textContent=stores[d.Request.TargetUUID]||'target datastore';$('toDir').textContent=base(d.TargetDir)+'/';
  $('routeMode').textContent=(move?'Copy and switch':'Copy only')+(d.Request.Live?' · running during the copy':'')+(move&&d.Request.PowerOn?' · start':'');
- $('modeNote').textContent=(d.Request.Live?'Experimental. ':'')+hints[(d.Request.Live?'live':'')+d.Request.Mode];
+ $('modeNote').textContent=(d.Request.Live?'Experimental. ':'')+hints[(d.Request.Live?'live':'')+d.Request.Mode]+(d.Request.BringDisks?bringHint:'');
  metrics('metrics',[['Virtual machine',d.VM.Name],['Power state',d.Power],['Data to copy',size(d.Allocated)+' of '+size(d.Provisioned)],['Space needed',size(d.Required)+' of '+size(d.TargetFree)+' free']]);
  const bad=d.Checks.filter(c=>c.Status!=='OK'), blocks=bad.filter(c=>c.Status==='BLOCK').length;
  $('checkSummary').textContent=blocks?blocks+' of '+d.Checks.length+' safety checks block this migration':bad.length?'Safe to start · '+bad.length+' warning'+(bad.length>1?'s':''):'All '+d.Checks.length+' safety checks passed';
