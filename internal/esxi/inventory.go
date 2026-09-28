@@ -23,6 +23,20 @@ type Datastore struct {
 // Unknown future VMFS versions require an explicit capability review.
 func SupportedVMFS(kind string) bool { return kind == "VMFS-5" || kind == "VMFS-6" }
 
+// DatastoreOf returns the datastore a canonical /vmfs/volumes/<uuid>/... path
+// lies on.
+func DatastoreOf(p string, ds []Datastore) (Datastore, bool) {
+	for _, d := range ds {
+		if strings.HasPrefix(p, path.Join("/vmfs/volumes", d.UUID)+"/") {
+			return d, true
+		}
+	}
+	return Datastore{}, false
+}
+
+// Usable reports whether VMs can live on the datastore: mounted, VMFS-5 or 6.
+func (d Datastore) Usable() bool { return d.Mounted && SupportedVMFS(d.Type) }
+
 type Capabilities struct {
 	Version   string
 	Supported bool

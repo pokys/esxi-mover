@@ -240,10 +240,8 @@ func diskLocationAdvice(r *Report, ref vmx.DiskRef, reason error, ds []esxi.Data
 	title, where := "A disk lies in a subfolder", "a subfolder of the VM folder"
 	if !strings.HasPrefix(full, path.Dir(r.SourceDir)+"/") {
 		title, where = "A disk lies on another datastore", "another datastore"
-		for _, d := range ds {
-			if strings.HasPrefix(full, path.Join("/vmfs/volumes", d.UUID)+"/") {
-				where = "datastore " + d.Name
-			}
+		if d, ok := esxi.DatastoreOf(full, ds); ok {
+			where = "datastore " + d.Name
 		}
 	}
 	// A copy must not overwrite a file already in the VM folder.

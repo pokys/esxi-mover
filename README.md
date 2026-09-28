@@ -38,6 +38,9 @@ Or paste [compose.yaml](compose.yaml) as a stack into Dockge or Portainer.
 2. Open `https://APPLIANCE_IP:8443`, check the fingerprint and sign in.
 3. Run `docker compose down` when you are done.
 
+To update, run `docker compose pull` before `start.sh`; Compose does not fetch
+a newer `latest` on its own.
+
 | Variable | Purpose |
 | --- | --- |
 | `MOVER_IMAGE` | Image to run, e.g. the pinned `ghcr.io/pokys/esxi-mover:v1.0.0`. Default: `latest`. |
@@ -53,7 +56,8 @@ Use a trusted management network: the page takes ESXi root credentials.
    keeps the source folder's name, or a free one is suggested.
 3. **Review** the preflight: where the VM goes, and one verdict.
 4. **Migrate**: graceful shutdown, thin clone of every disk, verification, and
-   only then the registration switch.
+   only then the registration switch. The shutdown goes through VMware Tools;
+   without them the migration waits for you to shut the guest down.
 
 | Operation | Source afterwards | Target afterwards |
 | --- | --- | --- |
@@ -67,8 +71,8 @@ the finished job reminds you to turn it on again.
 
 **Keep the VM running during the copy** takes a snapshot of its own, clones the
 now read-only base disks while the VM runs, then shuts it down and copies only
-what changed. The result is the same as without it. The source datastore needs at
-least 1 GiB free for those changes. Only the tool's own `esxi-mover-…` snapshot
+what changed. The result is the same as without it. The source datastore needs
+at least 1 GiB free for those changes. Only the tool's own `esxi-mover-…` snapshot
 is ever merged; any other snapshot stops the migration for review.
 
 **Include disks outside the VM folder** clones every disk the VM uses into the
@@ -78,17 +82,16 @@ stay where they are. The folder each such disk lies in is checked as well:
 snapshot files of that disk, or another VMX there that uses it, stop the
 migration.
 
-Together with *Keep the VM running during the copy*, the delta of such a disk
-grows next to it, so that datastore needs the same 1 GiB free. The delta is copied into
-the target folder and the target's snapshot list is rewritten to name the copy,
-never the source disk. A disk that has to be renamed in the target folder
-cannot be migrated this way, because its delta finds it by name.
+With *Keep the VM running during the copy* as well, the datastore of such a
+disk also needs 1 GiB free, and a disk that would get a new name in the target
+folder is refused.
 
 ## What it refuses
 
 - VMs with any snapshot, including leftover snapshot files
 - suspended VMs, linked clones, RDM, shared, independent or encrypted disks,
   vTPM, PCI passthrough
+- Changed Block Tracking, which backup software often turns on
 - disks outside the VM folder, unless *Include disks outside the VM folder* is on
 - anything but VMFS-5 and VMFS-6
 - a target without room for the used data + 15% + 1 GiB

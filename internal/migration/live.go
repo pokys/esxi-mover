@@ -61,17 +61,12 @@ func deltaPlaces(r Report) []string {
 func deltaFree(ds []esxi.Datastore, places []string) (int64, error) {
 	least := int64(-1)
 	for _, p := range places {
-		found := false
-		for _, d := range ds {
-			if strings.HasPrefix(p, path.Join("/vmfs/volumes", d.UUID)+"/") && d.Mounted && esxi.SupportedVMFS(d.Type) {
-				found = true
-				if least < 0 || d.Free < least {
-					least = d.Free
-				}
-			}
-		}
-		if !found {
+		d, ok := esxi.DatastoreOf(p, ds)
+		if !ok || !d.Usable() {
 			return 0, fmt.Errorf("a datastore holding a snapshot delta is no longer available as mounted VMFS")
+		}
+		if least < 0 || d.Free < least {
+			least = d.Free
 		}
 	}
 	return least, nil

@@ -29,13 +29,7 @@ func (a Analyzer) externalFile(ctx context.Context, ref, dir string, ds []esxi.D
 	if e != nil {
 		return "", e
 	}
-	supported := false
-	for _, d := range ds {
-		if d.Mounted && esxi.SupportedVMFS(d.Type) && strings.HasPrefix(canonical, path.Join("/vmfs/volumes", d.UUID)+"/") {
-			supported = true
-		}
-	}
-	if !supported {
+	if d, ok := esxi.DatastoreOf(canonical, ds); !ok || !d.Usable() {
 		return "", fmt.Errorf("the disk is not on a mounted VMFS-5 or VMFS-6 datastore")
 	}
 	exists, e := a.Host.Exists(ctx, canonical)

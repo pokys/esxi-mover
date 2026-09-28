@@ -68,7 +68,7 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 			target = d
 		}
 	}
-	if !target.Mounted || !esxi.SupportedVMFS(target.Type) {
+	if !target.Usable() {
 		r.check("Target datastore", statusBlock, "Target must be a mounted VMFS-5 or VMFS-6 datastore")
 		return r, nil
 	}
@@ -81,14 +81,9 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 		return r, e
 	}
 	r.SourceDir = path.Dir(r.SourceVMX)
-	var source esxi.Datastore
-	for _, d := range inv.Datastores {
-		if strings.HasPrefix(r.SourceVMX, path.Join("/vmfs/volumes", d.UUID)+"/") {
-			source = d
-		}
-	}
+	source, _ := esxi.DatastoreOf(r.SourceVMX, inv.Datastores)
 	r.SourceDatastore = source.Name
-	if !source.Mounted || !esxi.SupportedVMFS(source.Type) {
+	if !source.Usable() {
 		r.check("Source datastore", statusBlock, "Source must be a mounted VMFS-5 or VMFS-6 datastore")
 	}
 	if source.UUID == target.UUID {

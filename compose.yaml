@@ -1,4 +1,4 @@
-# ESXi Mover: a one-off cold migration utility.
+# ESXi Mover: a one-off datastore migration utility.
 #
 # Start it, read the admin token and the HTTPS certificate fingerprint from this
 # container's log, then open https://APPLIANCE_IP:8443 and sign in with the token.
