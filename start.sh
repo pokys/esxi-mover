@@ -33,5 +33,15 @@ if [ -z "${MOVER_APPLIANCE_UUID:-}" ] && [ -r /sys/class/dmi/id/product_uuid ]; 
   export MOVER_APPLIANCE_UUID
 fi
 
+# Compose never replaces an image it already has, so fetch the newest one
+# first. A locally built image (no registry in its name) has nothing to pull,
+# and without network the image already here is used.
+case "${MOVER_IMAGE:-}" in
+  */*|'')
+    docker compose pull --quiet ||
+      printf '%s\n' 'Could not pull a newer image; starting the one already on this machine.' >&2
+    ;;
+esac
+
 printf '%s\n' 'Open https://<appliance-ip>:8443 and sign in with the admin token printed below.'
 exec docker compose up --abort-on-container-exit

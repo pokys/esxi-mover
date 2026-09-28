@@ -21,6 +21,7 @@ case "$*" in
     n=$((n + 1)); printf '%s' "$n" > "$MOVER_TEST_BIN/polls"
     [ "$n" -gt "${MOVER_TEST_READY_DELAY:-0}" ]; exit $?
     ;;
+  'compose pull'*) [ "${MOVER_TEST_PULL_FAIL:-0}" = 0 ] || exit 1 ;;
   *' up '*) printf 'image=%s uuid=%s\n' "${MOVER_IMAGE:-}" "$MOVER_APPLIANCE_UUID" >> "$MOVER_TEST_LOG" ;;
 esac
 exit 0
@@ -75,6 +76,21 @@ class LauncherTests(unittest.TestCase):
     def test_selected_image_reaches_the_container(self):
         _, calls = self.run_start(MOVER_IMAGE="esxi-mover:local")
         self.assertIn("image=esxi-mover:local uuid=fixture-appliance", calls)
+
+    def test_newest_image_is_pulled_before_starting(self):
+        for image in ("", "ghcr.io/pokys/esxi-mover:v1.1.0"):
+            _, calls = self.run_start(MOVER_IMAGE=image)
+            pulls = [i for i, call in enumerate(calls) if call.startswith("docker compose pull")]
+            ups = [i for i, call in enumerate(calls) if " up " in call]
+            self.assertTrue(pulls and ups and pulls[0] < ups[0], calls)
+
+    def test_failed_pull_still_starts_the_image_already_here(self):
+        result, calls = self.run_start(MOVER_TEST_PULL_FAIL="1")
+        self.assertIn("Could not pull", result.stderr)
+
+    def test_local_image_is_never_pulled(self):
+        _, calls = self.run_start(MOVER_IMAGE="esxi-mover:local")
+        self.assertFalse(any("pull" in call for call in calls), calls)
 
     def test_stopped_daemon_is_started_and_awaited(self):
         _, calls = self.run_start(MOVER_TEST_RUNNING="0", MOVER_TEST_READY_DELAY="2")

@@ -38,12 +38,13 @@ Or paste [compose.yaml](compose.yaml) as a stack into Dockge or Portainer.
 2. Open `https://APPLIANCE_IP:8443`, check the fingerprint and sign in.
 3. Run `docker compose down` when you are done.
 
-To update, run `docker compose pull` before `start.sh`; Compose does not fetch
-a newer `latest` on its own.
+`start.sh` fetches the newest image each time it starts, and uses the one
+already there when offline. In Dockge or Portainer, pull the stack's image to
+update it.
 
 | Variable | Purpose |
 | --- | --- |
-| `MOVER_IMAGE` | Image to run, e.g. the pinned `ghcr.io/pokys/esxi-mover:v1.0.0`. Default: `latest`. |
+| `MOVER_IMAGE` | Image to run, e.g. the pinned `ghcr.io/pokys/esxi-mover:v1.1.0`. Default: `latest`. |
 | `MOVER_ADMIN_TOKEN` | Your own admin token. Empty: a random one, printed to the log. |
 | `MOVER_APPLIANCE_UUID` | This machine's BIOS UUID, so the tool refuses to move itself; `start.sh` fills it in. |
 
