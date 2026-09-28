@@ -14,6 +14,8 @@ VM is registered.
   second then registers the copy in place of the source and can start it.
 - **Shut down only at the end** *(experimental)*: the VM keeps running while
   its disks are copied and is off only for the final changes.
+- **Bring disks from other folders** *(experimental)*: disks on another
+  datastore or in a subfolder are copied into the target folder too.
 - Checks everything before touching anything, and stops rather than guesses.
 - **Stop** at any time before the point of no return.
 - Shows every SSH command it runs, with exit code and duration.
@@ -66,12 +68,19 @@ changed. The result is the same as without it. The source datastore needs at
 least 1 GiB free for those changes. Only the tool's own `esxi-mover-…` snapshot
 is ever merged; any other snapshot stops the migration for review.
 
+**Bring disks from other folders** clones every disk the VM uses into the one
+target folder, wherever it lies; a name already taken gets a suffix, such as
+`data_1.vmdk`, and the target VMX points at it. The originals are only read and
+stay where they are. The folder each such disk lies in is checked as well:
+snapshot files of that disk, or another VMX there that uses it, stop the
+migration. It works only with the VM shut down at the start.
+
 ## What it refuses
 
 - VMs with any snapshot, including leftover snapshot files
 - suspended VMs, linked clones, RDM, shared, independent or encrypted disks,
   vTPM, PCI passthrough
-- disks outside the VM folder
+- disks outside the VM folder, unless *Bring disks from other folders* is on
 - anything but VMFS-5 and VMFS-6
 - a target without room for the used data + 15% + 1 GiB
 

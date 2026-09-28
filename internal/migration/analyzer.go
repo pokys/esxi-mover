@@ -167,7 +167,7 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 		return r, e
 	}
 	if name := SnapshotArtifact(files); name != "" {
-		detail, a := artifactAdvice(&r, name, files)
+		detail, a := artifactAdvice(&r, r.SourceDir, name, files)
 		r.advised("Snapshot artifacts", statusBlock, detail, a)
 	} else {
 		r.check("Snapshot artifacts", statusOK, "No delta, seSparse, numbered snapshot or suspend files")
@@ -192,8 +192,23 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 	// A disk rejected here is one problem; the unclassified-path check below
 	// must not report the same VMX line a second time.
 	misplaced := map[string]bool{}
+	// Every name in the source folder is reserved, so a disk brought in from
+	// elsewhere never takes the name of one that lives next to the VMX.
+	sourceNames := map[string]bool{}
+	for _, f := range files {
+		sourceNames[path.Base(f)] = true
+	}
+	outside := map[string][]string{} // folder -> disks brought in from it
 	for _, ref := range configAnalysis.Disks {
 		src, e := a.localFile(ctx, ref.File, r.SourceDir, inv.Datastores)
+		external := false
+		if e != nil && req.BringDisks {
+			if p, xe := a.externalFile(ctx, ref.File, r.SourceDir, inv.Datastores); xe == nil {
+				src, e, external = p, nil, true
+			} else {
+				e = xe
+			}
+		}
 		if e != nil {
 			misplaced[ref.Key] = true
 			detail, adv := diskLocationAdvice(&r, ref, e, inv.Datastores, files)
@@ -205,6 +220,17 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 		}
 		backings[src] = true
 		name := path.Base(src)
+		if external {
+			name = freeName(name, sourceNames, destNames)
+			outside[path.Dir(src)] = append(outside[path.Dir(src)], src)
+			renamed := ""
+			if name != path.Base(src) {
+				renamed = " as " + name
+			}
+			r.advised("Disks from other folders", statusWarning, strings.TrimSuffix(ref.Key, ".filename")+": "+ref.File+" is copied into the target folder"+renamed, advise("A disk is brought in from another folder",
+				"Experimental. The original is only read and stays where it is. After the migration nothing registered uses it any more; it keeps its space until you delete it.",
+				say("Delete the original only after the migrated VM is verified.")))
+		}
 		extentName := strings.TrimSuffix(name, path.Ext(name)) + "-flat.vmdk"
 		if destNames[name] || destNames[extentName] {
 			r.check("Target filename", statusBlock, "Target filename collision")
@@ -228,7 +254,8 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 			r.check("VMDK format", statusBlock, e.Error())
 			continue
 		}
-		extent, e := a.localFile(ctx, desc.Extents[0].File, r.SourceDir, inv.Datastores)
+		// The data file must sit next to its own descriptor, wherever that is.
+		extent, e := a.localFile(ctx, desc.Extents[0].File, path.Dir(src), inv.Datastores)
 		if e != nil {
 			r.check("Disk extent", statusBlock, e.Error())
 			continue
@@ -246,7 +273,7 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 		if !known {
 			allocated = desc.Bytes
 		}
-		disk := Disk{ref.Key, src, path.Join(r.TargetDir, name), extent, desc.Bytes, allocated, known, desc.Thin, desc}
+		disk := Disk{ref.Key, src, path.Join(r.TargetDir, name), extent, desc.Bytes, allocated, known, desc.Thin, desc, external}
 		r.Disks = append(r.Disks, disk)
 		replacements[ref.Key] = name
 		if r.Provisioned > math.MaxInt64-desc.Bytes {
@@ -254,7 +281,9 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 		}
 		r.Provisioned += desc.Bytes
 		r.Allocated += allocated
-		fingerprints = append(fingerprints, src+"\n"+text+"\n"+extent)
+		// The target name is part of what was reviewed: a disk brought in from
+		// elsewhere may be renamed, and that must not change unnoticed.
+		fingerprints = append(fingerprints, src+"\n"+text+"\n"+extent+"\n"+name)
 		if r.Power == esxi.Off {
 			if e = a.Host.VerifyChain(ctx, src); e != nil {
 				r.check("Source disk chain", statusBlock, e.Error())
@@ -263,6 +292,21 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 	}
 	if len(r.Disks) == 0 {
 		r.check("Disks", statusBlock, "No safe disks found")
+	}
+	if len(outside) > 0 {
+		if req.Live {
+			r.check("Disks from other folders", statusBlock, "Disks from other folders are only copied with the VM shut down at the start")
+		}
+		dirs := []string{}
+		for d := range outside {
+			dirs = append(dirs, d)
+		}
+		sort.Strings(dirs)
+		for _, d := range dirs {
+			if e := a.inspectFolder(ctx, &r, d, outside[d], inv.Datastores); e != nil {
+				return r, e
+			}
+		}
 	}
 	for _, key := range []string{"nvram", "extendedconfigfile"} {
 		if ref := r.Config[key]; ref != "" {

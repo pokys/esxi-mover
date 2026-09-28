@@ -66,6 +66,10 @@ type Request struct {
 	TargetName string
 	// Live keeps the VM running while its disks are copied (experimental).
 	Live bool
+	// BringDisks also copies disks that lie outside the VM folder, on another
+	// datastore or in a subfolder, into the target folder (experimental, cold
+	// only). The originals are only read.
+	BringDisks bool
 }
 
 // Check is one safety check. A blocking check also carries a plain-language
@@ -89,6 +93,8 @@ type Disk struct {
 	Provisioned, Allocated      int64
 	AllocationKnown, Thin       bool
 	Descriptor                  vmdk.Descriptor `json:"-"`
+	// External marks a disk brought in from outside the VM folder.
+	External bool
 }
 type ConfigFile struct{ Key, Source, Name string }
 type Report struct {

@@ -59,9 +59,9 @@ function modeChanged(){
 modeChanged();
 for(const r of document.querySelectorAll('input[name=mode]'))r.addEventListener('change',()=>{modeChanged();report=null;show('analysis',false);});
 $('live').addEventListener('change',modeChanged);
-for(const id of ['vm','datastore','powerOn','live'])$(id).addEventListener('change',()=>{report=null;show('analysis',false);});
+for(const id of ['vm','datastore','powerOn','live','bringDisks'])$(id).addEventListener('change',()=>{report=null;show('analysis',false);});
 $('targetName').addEventListener('input',()=>{report=null;show('analysis',false);});
-$('analyzeForm').addEventListener('submit',event=>{event.preventDefault();action(async()=>{report=null;show('analysis',false);const d=await api('analyze',{VMID:Number($('vm').value),TargetUUID:$('datastore').value,Mode:mode(),PowerOn:mode()==='MOVE'&&$('powerOn').checked,Live:$('live').checked,TargetName:$('targetName').value});report=d;$('maintenance').checked=false;$('start').disabled=true;$('readyBadge').textContent=d.Ready?'Ready':'Blocked';$('readyBadge').className='badge '+(d.Ready?'ok':'block');renderReport(d);show('analysis');$('analysis').scrollIntoView({behavior:'smooth',block:'start'});},'Running the safety checks on ESXi');});
+$('analyzeForm').addEventListener('submit',event=>{event.preventDefault();action(async()=>{report=null;show('analysis',false);const d=await api('analyze',{VMID:Number($('vm').value),TargetUUID:$('datastore').value,Mode:mode(),PowerOn:mode()==='MOVE'&&$('powerOn').checked,Live:$('live').checked,BringDisks:$('bringDisks').checked,TargetName:$('targetName').value});report=d;$('maintenance').checked=false;$('start').disabled=true;$('readyBadge').textContent=d.Ready?'Ready':'Blocked';$('readyBadge').className='badge '+(d.Ready?'ok':'block');renderReport(d);show('analysis');$('analysis').scrollIntoView({behavior:'smooth',block:'start'});},'Running the safety checks on ESXi');});
 const base=p=>(p||'').split('/').filter(Boolean).pop()||'';
 function renderReport(d){
  const move=d.Request.Mode==='MOVE';
@@ -75,7 +75,7 @@ function renderReport(d){
  $('checkSummary').className='summary '+(blocks?'block':bad.length?'warning':'ok');
  renderIssues(bad.filter(c=>c.Status==='BLOCK').concat(bad.filter(c=>c.Status!=='BLOCK')), blocks>0);
  $('checks').replaceChildren();d.Checks.forEach(c=>{const tr=document.createElement('tr');tr.append(text('td',c.Name),text('td',c.Status,c.Status.toLowerCase()),text('td',c.Detail));$('checks').append(tr);});$('checkBox').open=false;
- $('disks').replaceChildren();(d.Disks||[]).forEach(disk=>{const el=text('div',base(disk.Source),'disk');el.append(text('small',size(disk.Provisioned)+' provisioned · '+(disk.AllocationKnown?size(disk.Allocated)+' used':'usage unknown, counting provisioned')+' · '+(disk.Thin?'thin':'thick')+' → thin'));$('disks').append(el);});
+ $('disks').replaceChildren();(d.Disks||[]).forEach(disk=>{const renamed=base(disk.Target)!==base(disk.Source);const el=text('div',base(disk.Source)+(renamed?' → '+base(disk.Target):''),'disk');if(disk.External)el.append(text('em','From another folder','tag'),text('small',disk.Source));el.append(text('small',size(disk.Provisioned)+' provisioned · '+(disk.AllocationKnown?size(disk.Allocated)+' used':'usage unknown, counting provisioned')+' · '+(disk.Thin?'thin':'thick')+' → thin'));$('disks').append(el);});
  $('destination').textContent=d.SourceDir+'  →  '+d.TargetDir;
 }
 // Problems read as one grouped list. Each row names the problem in plain words

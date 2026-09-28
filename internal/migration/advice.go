@@ -37,7 +37,7 @@ func blockAdvice(r *Report, name, detail string) advice {
 			"Two migrations at once could work on the same VM or folder. A migration that failed keeps the lock on purpose, because it may have left the source unregistered or a half-written target that someone has to look at.",
 			say("If a migration is running, wait for it to finish."),
 			say("If one ended failed or uncertain, open it and resolve it first, and check its target folder."),
-			command("Only when no migration is running, archive the lock. A host reboot also clears it.", "mv /tmp/esxi-mover/active /tmp/esxi-mover/abandoned-$(date +%s)"),
+			command("Only when no migration is running, archive the lock. A host reboot also clears it.", "mv /tmp/esxi-mover/active /tmp/esxi-mover/reviewed-$(date +%s)"),
 			again())
 	case "Target datastore", "Source datastore":
 		if strings.Contains(detail, "VMFS") {
@@ -74,6 +74,11 @@ func blockAdvice(r *Report, name, detail string) advice {
 		return advise("The VM runs on a snapshot",
 			"Its current data is spread across a chain of files. Copying only part of the chain would silently lose everything written since the snapshot.",
 			say("Open Snapshots in the host client and choose Delete all or Consolidate."),
+			again())
+	case "Disks from other folders":
+		return advise("Disks from other folders need the VM off",
+			"While the VM runs, ESXi writes a snapshot for every disk. For a disk outside the VM folder, that snapshot and its merge back have never been verified on a real host.",
+			say("Turn off Shut down only at the end, so the VM is shut down before the copy starts."),
 			again())
 	case "Configuration files":
 		return advise("Unexpected NVRAM or VMXF file",
@@ -230,36 +235,46 @@ func diskLocationAdvice(r *Report, ref vmx.DiskRef, reason error, ds []esxi.Data
 	// A copy must not overwrite a file already in the VM folder.
 	taken := map[string]bool{}
 	for _, f := range files {
-		taken[strings.ToLower(path.Base(f))] = true
+		taken[path.Base(f)] = true
 	}
-	stem := strings.TrimSuffix(path.Base(full), path.Ext(full))
-	name := stem + ".vmdk"
-	for i := 1; taken[strings.ToLower(name)] || taken[strings.ToLower(strings.TrimSuffix(name, ".vmdk")+"-flat.vmdk")]; i++ {
-		name = stem + "_" + strconv.Itoa(i) + ".vmdk"
+	name := freeName(path.Base(full), taken)
+	if r.Request.BringDisks {
+		return detail + " on " + where + ": " + reason.Error(), advise(title,
+			"Bring disks from other folders is on, but this disk cannot be brought along, so the copy would still point at the original.",
+			say("Move the disk to a mounted VMFS-5 or VMFS-6 datastore, or detach it before the migration and attach it again afterwards."),
+			again())
 	}
 	return detail + " on " + where, advise(title,
 		"This tool copies the VM folder only. The disk would stay behind and the copy would still point at it, so two VMs could end up writing to the same disk.",
-		say("Choose one of the two ways below. Both need the VM shut down."),
+		say("Choose one of the ways below. All of them need the VM shut down."),
+		say("Let this tool copy it: turn on Bring disks from other folders (experimental) and analyze again. The disk is copied into the target folder and the original stays where it is."),
 		say("To keep the disk where it is: in Edit settings remove the disk on "+device+" without deleting it from the datastore, and migrate without starting the VM. Then add it back to the migrated VM as an existing hard disk on "+device+" and start it."),
 		command("To bring the disk along: copy it into the VM folder. The source datastore needs room for it.", "vmkfstools -i "+esxi.Quote(full)+" "+esxi.Quote(path.Join(r.SourceDir, name))+" -d thin"),
 		say("Then in Edit settings remove the old disk on "+device+" without deleting it, add "+name+" as an existing hard disk on "+device+", and check that the VM starts. Delete the old disk only after the migrated VM is verified."),
 		again())
 }
 
-// artifactAdvice explains a snapshot or suspend file in the VM folder. The
-// file still blocks: from the file alone its orphan status cannot be proven.
-// The steps show how to prove it without changing anything, then what to do.
-func artifactAdvice(r *Report, name string, files []string) (string, advice) {
-	full := path.Join(r.SourceDir, name)
-	quarantine := path.Join(path.Dir(r.SourceDir), "_quarantine", path.Base(r.SourceDir))
+// artifactAdvice explains a snapshot or suspend file in dir, the VM folder or a
+// folder holding one of its disks. The file still blocks: from the file alone
+// its orphan status cannot be proven. The steps show how to prove it without
+// changing anything, then what to do.
+func artifactAdvice(r *Report, dir, name string, files []string) (string, advice) {
+	full := path.Join(dir, name)
+	quarantine := path.Join(path.Dir(dir), "_quarantine", path.Base(dir))
+	// A reference can sit in the VM's own VMX and snapshot list, or in files
+	// next to the artifact.
+	look := esxi.Quote(r.SourceDir) + "/*.vmx " + esxi.Quote(r.SourceDir) + "/*.vmsd"
+	if dir != r.SourceDir {
+		look += " " + esxi.Quote(dir) + "/*.vmx " + esxi.Quote(dir) + "/*.vmsd"
+	}
 	lock := command("Confirm no process holds it. The output, or the end of /var/log/vmkernel.log, must show mode 0.", "vmkfstools -D "+esxi.Quote(full))
 	move := func(names ...string) []Step {
 		paths := []string{}
 		for _, n := range names {
-			paths = append(paths, path.Join(r.SourceDir, n))
+			paths = append(paths, path.Join(dir, n))
 		}
 		return []Step{
-			command("In a maintenance window, move it out of the VM folder. On the same datastore a move is only a rename and can be undone.",
+			command("In a maintenance window, move it out of its folder. On the same datastore a move is only a rename and can be undone.",
 				"mkdir -p "+esxi.Quote(quarantine)+" && mv "+esxi.Argv(append(paths, quarantine+"/")...)),
 			again(),
 			say("Delete the quarantine folder only after the migrated VM is verified."),
@@ -295,7 +310,7 @@ func artifactAdvice(r *Report, name string, files []string) (string, advice) {
 	why := "If it still belongs to a snapshot ESXi lost track of, the data in it would be missing from the copy, without any error. The file alone does not show which, so this tool does not guess."
 	steps := []Step{
 		say("Already checked: the active VMX does not use it and Snapshot Manager lists no snapshot."),
-		command("Confirm nothing references it. This must print nothing.", "grep -l "+esxi.Quote(name)+" "+esxi.Quote(r.SourceDir)+"/*.vmx "+esxi.Quote(r.SourceDir)+"/*.vmsd 2>/dev/null"),
+		command("Confirm nothing references it. This must print nothing.", "grep -l "+esxi.Quote(name)+" "+look+" 2>/dev/null"),
 		lock,
 		say("If unsure, choose Consolidate under Snapshots in the host client instead."),
 	}
