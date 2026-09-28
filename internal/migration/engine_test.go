@@ -689,6 +689,40 @@ func TestRepeatedProblemIsOneRow(t *testing.T) {
 		t.Fatalf("keys missing: %q", rows[0].Detail)
 	}
 }
+
+// A disk on another datastore is one problem: the row names the device and the
+// datastore, and the same VMX line is not reported again as an unknown path.
+func TestDiskOnAnotherDatastoreIsNamedOnce(t *testing.T) {
+	h := newFake(1)
+	h.files[sourceDir+"/lab.vmx"] = strings.ReplaceAll(h.files[sourceDir+"/lab.vmx"], "d0.vmdk", "[target] data/d0.vmdk")
+	h.files["/vmfs/volumes/target/data/d0.vmdk"] = diskText(0, true)
+	r, e := (Analyzer{Host: h}).Analyze(context.Background(), Request{VMID: 7, TargetUUID: "target", Mode: "COPY"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	requireAdvice(t, r)
+	if reportStatus(r, "External configuration reference") != "MISSING" {
+		t.Fatal("the misplaced disk was reported twice")
+	}
+	var row Check
+	for _, c := range r.Checks {
+		if c.Name == "VMDK location" {
+			row = c
+		}
+	}
+	if row.Title != "A disk lies on another datastore" || !strings.Contains(row.Detail, "[target] data/d0.vmdk") {
+		t.Fatalf("disk not named: %+v", row)
+	}
+	copied := false
+	for _, s := range row.Steps {
+		if strings.Contains(s.Command, "vmkfstools -i '/vmfs/volumes/target/data/d0.vmdk' '"+sourceDir+"/") {
+			copied = true
+		}
+	}
+	if !copied {
+		t.Fatalf("no copy command with real paths: %+v", row.Steps)
+	}
+}
 func TestUnsafeConfigurationsBlock(t *testing.T) {
 	for name, change := range map[string]func(*fakeHost){"suspended": func(h *fakeHost) { h.power[7] = esxi.Suspended }, "vsan": func(h *fakeHost) { h.ds[1].Type = "vsan" }, "rdm": func(h *fakeHost) {
 		h.files[sourceDir+"/d0.vmdk"] = strings.ReplaceAll(diskText(0, true), `createType="vmfs"`, `createType="vmfsRawDeviceMap"`)

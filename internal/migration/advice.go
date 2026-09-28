@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"esxi-mover/internal/esxi"
+	"esxi-mover/internal/vmx"
 )
 
 // advice turns a blocking check into a plain-language title, why it matters,
@@ -73,11 +74,6 @@ func blockAdvice(r *Report, name, detail string) advice {
 		return advise("The VM runs on a snapshot",
 			"Its current data is spread across a chain of files. Copying only part of the chain would silently lose everything written since the snapshot.",
 			say("Open Snapshots in the host client and choose Delete all or Consolidate."),
-			again())
-	case "VMDK location":
-		return advise("A disk lies outside the VM folder",
-			"This tool copies one folder. A disk elsewhere would stay behind, and the copy would point at the source disk, so two VMs could end up writing to it.",
-			say("With the VM off, copy the disk into the VM folder with vmkfstools -i and point the VMX at the copy, or detach the disk now and attach it again after the migration."),
 			again())
 	case "Configuration files":
 		return advise("Unexpected NVRAM or VMXF file",
@@ -206,6 +202,48 @@ func vmxAdvice(r *Report, detail string) advice {
 			say("Attach the VM's disk, or move it another way."))
 	}
 	return advice{}
+}
+
+// diskLocationAdvice names the disk that is not directly in the VM folder and
+// says where it is. There are two ways out: leave the disk where it is and
+// detach it for the migration, or copy it into the VM folder first.
+func diskLocationAdvice(r *Report, ref vmx.DiskRef, reason error, ds []esxi.Datastore, files []string) (string, advice) {
+	device := strings.TrimSuffix(ref.Key, ".filename")
+	detail := device + " uses " + ref.File
+	full, e := esxi.ResolveReference(ref.File, r.SourceDir, ds)
+	if e != nil || path.Dir(full) == r.SourceDir {
+		return detail + ": " + reason.Error(), advise("A disk cannot be found",
+			"The VMX names a disk this tool cannot open, so it cannot tell what the copy would be missing.",
+			say("Open Edit settings and check the disk on "+device+". The file may have been deleted, or its datastore renamed or unmounted."),
+			say("Remove the entry if the disk is no longer needed, or point it at the right file."),
+			again())
+	}
+	title, where := "A disk lies in a subfolder", "a subfolder of the VM folder"
+	if !strings.HasPrefix(full, path.Dir(r.SourceDir)+"/") {
+		title, where = "A disk lies on another datastore", "another datastore"
+		for _, d := range ds {
+			if strings.HasPrefix(full, path.Join("/vmfs/volumes", d.UUID)+"/") {
+				where = "datastore " + d.Name
+			}
+		}
+	}
+	// A copy must not overwrite a file already in the VM folder.
+	taken := map[string]bool{}
+	for _, f := range files {
+		taken[strings.ToLower(path.Base(f))] = true
+	}
+	stem := strings.TrimSuffix(path.Base(full), path.Ext(full))
+	name := stem + ".vmdk"
+	for i := 1; taken[strings.ToLower(name)] || taken[strings.ToLower(strings.TrimSuffix(name, ".vmdk")+"-flat.vmdk")]; i++ {
+		name = stem + "_" + strconv.Itoa(i) + ".vmdk"
+	}
+	return detail + " on " + where, advise(title,
+		"This tool copies the VM folder only. The disk would stay behind and the copy would still point at it, so two VMs could end up writing to the same disk.",
+		say("Choose one of the two ways below. Both need the VM shut down."),
+		say("To keep the disk where it is: in Edit settings remove the disk on "+device+" without deleting it from the datastore, and migrate without starting the VM. Then add it back to the migrated VM as an existing hard disk on "+device+" and start it."),
+		command("To bring the disk along: copy it into the VM folder. The source datastore needs room for it.", "vmkfstools -i "+esxi.Quote(full)+" "+esxi.Quote(path.Join(r.SourceDir, name))+" -d thin"),
+		say("Then in Edit settings remove the old disk on "+device+" without deleting it, add "+name+" as an existing hard disk on "+device+", and check that the VM starts. Delete the old disk only after the migrated VM is verified."),
+		again())
 }
 
 // artifactAdvice explains a snapshot or suspend file in the VM folder. The

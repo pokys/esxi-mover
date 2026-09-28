@@ -189,10 +189,15 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 	backings := map[string]bool{}
 	destNames := map[string]bool{path.Base(r.SourceVMX): true}
 	fingerprints := []string{}
+	// A disk rejected here is one problem; the unclassified-path check below
+	// must not report the same VMX line a second time.
+	misplaced := map[string]bool{}
 	for _, ref := range configAnalysis.Disks {
 		src, e := a.localFile(ctx, ref.File, r.SourceDir, inv.Datastores)
 		if e != nil {
-			r.check("VMDK location", statusBlock, e.Error())
+			misplaced[ref.Key] = true
+			detail, adv := diskLocationAdvice(&r, ref, e, inv.Datastores, files)
+			r.advised("VMDK location", statusBlock, detail, adv)
 			continue
 		}
 		if backings[src] {
@@ -303,7 +308,7 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 	}
 	// Unknown path-bearing keys could make the target write into the source.
 	for k, v := range r.Config {
-		if _, ok := replacements[k]; ok {
+		if _, ok := replacements[k]; ok || misplaced[k] {
 			continue
 		}
 		if strings.Contains(v, "/vmfs/") || strings.HasPrefix(v, "[") {
