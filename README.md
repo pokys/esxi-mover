@@ -62,7 +62,7 @@ Use a trusted management network: the page takes ESXi root credentials.
 The tool never starts the source. A switched VM keeps its identity, so ESXi
 does not ask "moved or copied?"; a copy is left to get a new one. Autostart
 belongs to the registration, so a switched VM is not in the host's autostart;
-the preflight and the finished job remind you to turn it on again.
+the finished job reminds you to turn it on again.
 
 **Keep the VM running during the copy** takes a snapshot of its own, clones the
 now read-only base disks while the VM runs, then shuts it down and copies only

@@ -152,14 +152,13 @@ func (a Analyzer) inspect(ctx context.Context, req Request, id string, done prog
 		}
 	}
 	// Autostart belongs to the registration. A switch registers the target as a
-	// new VM, so the host would no longer start it; say so before and after.
-	// An unreadable sequence only means no reminder, never a block.
+	// new VM, so the host would no longer start it. That is no risk to the
+	// migration, so it is noted here and the finished job reminds of it. An
+	// unreadable sequence only means no reminder, never a block.
 	if req.Mode == modeMove {
 		if seq, e := a.Host.Autostart(ctx); e == nil && seq[req.VMID].On() {
 			r.Autostart = seq[req.VMID].Order
-			r.advised("Autostart", statusWarning, fmt.Sprintf("The host starts this VM when it boots (position %d); the switched VM is not started", r.Autostart), advise("Autostart does not move with the VM",
-				"Autostart belongs to the VM's registration. After the switch the target is a newly registered VM, so the host would not start it after a reboot.",
-				say(fmt.Sprintf("After the migration, open Host › Manage › System › Autostart in the host client and turn it on for the migrated VM, at position %d.", r.Autostart))))
+			r.check("Autostart", statusOK, fmt.Sprintf("In the host's autostart at position %d; turn it on for the migrated VM after the switch", r.Autostart))
 		}
 	}
 	raw, e := a.Host.ReadFile(ctx, r.SourceVMX)

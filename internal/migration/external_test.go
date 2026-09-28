@@ -262,9 +262,11 @@ func TestSwitchRemindsOfAutostart(t *testing.T) {
 			h := newFake(1)
 			h.autostart = map[int]esxi.AutoStart{7: {Order: 2, Action: tc.action}}
 			r := analyze(t, h, tc.mode, false)
+			// A note among the checks, never a warning: it does not endanger
+			// the migration.
 			rows := find(r, "Autostart")
-			if (len(rows) == 1 && rows[0].Status == statusWarning) != tc.warned || (!tc.warned && len(rows) != 0) {
-				t.Fatalf("autostart warning = %v, want %t", rows, tc.warned)
+			if (len(rows) == 1 && rows[0].Status == statusOK) != tc.warned || (!tc.warned && len(rows) != 0) {
+				t.Fatalf("autostart note = %v, want %t", rows, tc.warned)
 			}
 			j := NewJob(r)
 			(&Engine{h, testOptions()}).Run(context.Background(), j)
