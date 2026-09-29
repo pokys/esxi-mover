@@ -10,6 +10,12 @@ on:
 permissions:
   contents: read
 
+# The build action would otherwise store a build record as an artifact and a
+# summary on every run; nothing here needs them kept.
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: false
+  DOCKER_BUILD_SUMMARY: false
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
