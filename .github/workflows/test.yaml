@@ -37,6 +37,7 @@ jobs:
       - name: Check deployment configuration
         run: |
           sh -n start.sh
+          sh -n scripts/capture-host.sh
           python3 scripts/test-start.py
           docker compose config --quiet
       - name: Set up Docker Buildx
