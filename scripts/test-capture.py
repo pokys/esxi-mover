@@ -20,7 +20,7 @@ SENSITIVE = ["Fake Mail", "Fake Store", "fake-2", "fakeweb", "fake-esx-host",
 DOUBLES = {
     "vim-cmd": r'''#!/bin/sh
 case "$1" in
- vmsvc/getallvms) printf 'Vmid  Name  File  Guest OS  Version  Annotation\n12     Fake Mail   [Fake Store] Fake Mail/Fake Mail.vmx   debian9_64Guest   vmx-13   root pw SecretPass1 at 203.0.113.9\n   second line SecretPass2\nthird SecretPass3\n13     fakeweb   [fake-2] fakeweb/fakeweb.vmx   ubuntu64Guest   vmx-14\n';;
+ vmsvc/getallvms) printf 'Vmid  Name  File  Guest OS  Version  Annotation\n12     Fake Mail   [Fake Store] Fake Mail/Fake Mail.vmx   debian9_64Guest   vmx-13   root pw SecretPass1 at 203.0.113.9\n   second line SecretPass2\nthird SecretPass3\n13     fakeweb   [fake-2] fakeweb/fakeweb.vmx   ubuntu64Guest   vmx-14\n14     test   [fake-2] test/test.vmx   ubuntu64Guest   vmx-14\n';;
  vmsvc/power.getstate) printf 'Retrieved runtime info\nPowered on\n';;
  vmsvc/snapshot.get) printf 'Get Snapshot:\n|-ROOT\n--Snapshot Name        : before SecretUpgrade\n--Snapshot Id        : 1\n--Snapshot Desciption  : ticket SecretTicket\ncontinues SecretDesc\n--Snapshot State       : powered off\n';;
  vmsvc/message) printf 'No message.\n';;
@@ -65,6 +65,9 @@ class CaptureTests(unittest.TestCase):
         self.assertIn("vmx-13    note", out)
         self.assertIn("--Snapshot Name        : masked", out)
         self.assertIn("file.xlsx", out)
+        # A VM named like a command leaves the command list alone.
+        self.assertIn("test: found", out)
+        self.assertNotIn("test/test.vmx", out)
         self.assertIn('toolsRunningStatus = "guestToolsRunning"', out)
         self.assertIn("Config File: /vmfs/volumes/ds1-uuid/vm1/vm1.vmx", out)
 

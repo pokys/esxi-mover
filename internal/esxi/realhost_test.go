@@ -53,6 +53,38 @@ const guest70 = "   toolsStatus = \"toolsOld\", \n" +
 	"   toolsHealthEvents = <unset>, \n" +
 	"      customizationStatus = \"TOOLSDEPLOYPKG_IDLE\", \n"
 
+// ESXi 8.0 Update 1: a note may leave lines of blanks only, and the system
+// volume is VMFSOS instead of VFFS.
+const getallvms80 = "Vmid           Name                                        File                                        Guest OS            Version                                                                                                         Annotation                                                                                                      \n" +
+	"10     vm1                  [ds2] vm1/vm1.vmx                                 windows2019srv_64Guest       vmx-20                                                                                                                                                                                                                          \n" +
+	"5      vm7         [ds2] vm7/vm7.vmx               vmwarePhoton64Guest          vmx-20    A note\n" +
+	"\n" +
+	"   that continues\n" +
+	"\n" +
+	"        \n" +
+	"7      vm8           [ds2] vm8/vm8.vmx                   windows2019srvNext_64Guest   vmx-20                                                                                                                                                                                                                          \n"
+
+const filesystems80 = `Mount Point                                        Volume Name                                 UUID                                 Mounted  Type             Size           Free
+-------------------------------------------------  ------------------------------------------  -----------------------------------  -------  ------  -------------  -------------
+/vmfs/volumes/00000000-00000000-0000-000000000001  ds1                                     00000000-00000000-0000-000000000001     true  VMFS-6   102542344192    87291854848
+/vmfs/volumes/00000000-00000000-0000-000000000003  OSDATA-00000000-00000000-0000-000000000003  00000000-00000000-0000-000000000003     true  VMFSOS   128580583424   122645643264
+/vmfs/volumes/00000000-00000000-0000-000000000004  BOOTBANK1                                   00000000-00000000-0000-000000000004     true  vfat       4293591040     4015718400
+`
+
+func TestRealESXi80Shapes(t *testing.T) {
+	vms, e := ParseVMs(getallvms80)
+	if e != nil || len(vms) != 3 || vms[1].ID != 5 || vms[2].VMXPath != "[ds2] vm8/vm8.vmx" {
+		t.Fatalf("VMs: %+v %v", vms, e)
+	}
+	ds, e := ParseDatastores(filesystems80)
+	if e != nil || len(ds) != 3 || !ds[0].Usable() || ds[1].Usable() || ds[1].Type != "VMFSOS" {
+		t.Fatalf("datastores: %+v %v", ds, e)
+	}
+	if !versionPattern.MatchString("VMware ESXi 8.0.1 build-00000000\nVMware ESXi 8.0 Update 1\n") {
+		t.Fatal("ESXi 8.0.1 not recognized")
+	}
+}
+
 func TestRealESXi70Shapes(t *testing.T) {
 	vms, e := ParseVMs(getallvms70)
 	if e != nil {

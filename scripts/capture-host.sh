@@ -34,11 +34,13 @@ shell_section() {
   printf '%s %s\n' '----- exit' "$?" >> "$raw"
 }
 
-printf 'esxi-mover host capture, format 1\n' >> "$raw"
-section vmware -vl
+# Which commands exist is printed as it is: it holds only fixed command
+# names, which a VM called "test" must not turn into a placeholder.
+printf 'esxi-mover host capture, format 1\n'
 for c in vim-cmd vmkfstools esxcli readlink find stat du nohup sh head tail mkdir mv cat test kill; do
-  printf '%s: %s\n' "$c" "$(which "$c" >/dev/null 2>&1 && echo found || echo MISSING)" >> "$raw"
+  printf '%s: %s\n' "$c" "$(which "$c" >/dev/null 2>&1 && echo found || echo MISSING)"
 done
+section vmware -vl
 
 section vim-cmd vmsvc/getallvms
 section esxcli storage filesystem list
