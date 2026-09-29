@@ -8,7 +8,9 @@
 #
 # Run it from a machine with this repository, without copying it to the host:
 #   ssh -p 22 root@ESXI_HOST sh -s -- VMID < scripts/capture-host.sh > esxi-shape.txt
-# (-p is the host's SSH port.)
+# (-p is the host's SSH port.) From PowerShell, go through cmd, which passes
+# the file unchanged; a PowerShell pipe would add CR to every line:
+#   cmd /c "ssh -p 22 root@ESXI_HOST sh -s -- VMID < scripts\capture-host.sh > esxi-shape.txt"
 # VMID is optional: a VM whose details are captured. Pick one that is running
 # and has VMware Tools; without it, the first VM in the inventory is used.
 set -u
@@ -57,7 +59,8 @@ if [ -n "$vmid" ]; then
   vmx="/vmfs/volumes/$store/${ref#*] }"
   dir=${vmx%/*}
   shell_section "readlink -f '$dir'"
-  shell_section "find '$dir' -mindepth 1 -maxdepth 1 -print0 | tr '\\000' '\\n'"
+  # ESXi 7 has no tr, so the listing is printed one name per line.
+  shell_section "find '$dir' -mindepth 1 -maxdepth 1 -print"
   disk=$(find "$dir" -maxdepth 1 -name '*.vmdk' ! -name '*-flat.vmdk' ! -name '*-delta.vmdk' ! -name '*-sesparse.vmdk' ! -name '*-ctk.vmdk' 2>/dev/null | head -n 1)
   if [ -n "$disk" ]; then
     shell_section "head -c 4096 '$disk'"

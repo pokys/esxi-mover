@@ -11,3 +11,4 @@
 *.ppk
 .codex/
 .toolchain/
+esxi-shape*.txt

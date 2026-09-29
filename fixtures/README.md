@@ -14,11 +14,14 @@ machine with this repository; nothing is copied to the host:
 ssh -p 22 root@ESXI_HOST sh -s -- VMID < scripts/capture-host.sh > esxi-shape.txt
 ```
 
-In PowerShell, which has no `<` redirection:
+In PowerShell, go through `cmd`: PowerShell has no `<` redirection, and its
+pipe would add a CR to every line, which the ESXi shell cannot run.
 
 ```powershell
-Get-Content scripts/capture-host.sh | ssh -p 22 root@ESXI_HOST sh -s -- VMID > esxi-shape.txt
+cmd /c "ssh -p 22 root@ESXI_HOST sh -s -- VMID < scripts\capture-host.sh > esxi-shape.txt"
 ```
+
+Run it on your own machine, in the repository folder, not in an ESXi shell.
 
 `-p` is the host's SSH port. `VMID` (from `vim-cmd vmsvc/getallvms`) is a VM
 whose details are captured; pick a running one with VMware Tools. Read `esxi-shape.txt` before sharing it:
