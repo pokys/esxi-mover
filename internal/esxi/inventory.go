@@ -93,7 +93,7 @@ func ParseVMs(s string) ([]VM, error) {
 			return nil, fmt.Errorf("unexpected absolute inventory path")
 		}
 		annotated = strings.TrimSpace(m[5]) != ""
-		out = append(out, VM{id, strings.TrimSpace(m[2]), m[3], "[" + m[3] + "] " + m[4]})
+		out = append(out, VM{ID: id, Name: strings.TrimSpace(m[2]), Datastore: m[3], VMXPath: "[" + m[3] + "] " + m[4]})
 	}
 	if !header {
 		return nil, fmt.Errorf("missing VM inventory header")
