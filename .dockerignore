@@ -11,3 +11,4 @@ coverage.out
 *.pfx
 *.ppk
 .codex/
+.toolchain/

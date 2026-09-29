@@ -10,3 +10,4 @@
 *.pfx
 *.ppk
 .codex/
+.toolchain/
