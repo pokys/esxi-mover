@@ -12,6 +12,9 @@ import (
 type VM struct {
 	ID                       int
 	Name, Datastore, VMXPath string
+	// Power is "on" or "off" in the list offered for selection, and empty
+	// wherever it was not read.
+	Power string `json:",omitempty"`
 }
 type Datastore struct {
 	Name, UUID, Mount, Type string

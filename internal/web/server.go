@@ -282,6 +282,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, se *session) {
 		problem(w, 400, e.Error())
 		return
 	}
+	host.MarkRunning(r.Context(), inventory.VMs, inventory.Datastores)
 	se.mu.Lock()
 	se.closeHost()
 	se.host = host
