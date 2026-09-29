@@ -7,6 +7,7 @@ go vet ./...
 go test -race -count=1 ./...
 node --test scripts/test-web.mjs # app.js with a simulated DOM and fetch
 python3 scripts/test-start.py   # start.sh against fake docker and rc-service
+python3 scripts/test-capture.py # capture-host.sh leaks no name, address or note
 docker compose config --quiet
 docker build .                  # also runs the test suite inside the build
 ```

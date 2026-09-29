@@ -91,6 +91,32 @@ awk -F '\t' '
     return out s
   }
   NR == FNR { if ($1 != "") { from[++n] = $1; to[n] = $2 } next }
+  # Free text is where people write what must not leave the host: notes on
+  # VMs, snapshot names and descriptions, file names. Only its shape is kept.
+  # Headers and exit lines name paths too, so they go through the name
+  # replacement below like everything else; only their text is not masked.
+  { body = 1 }
+  /^===== / { sec = $0; body = 0 }
+  /^----- exit/ { sec = ""; body = 0 }
+  body && sec ~ /getallvms/ && !/^Vmid/ {
+    if (match($0, /vmx-[0-9]+/)) {
+      head = substr($0, 1, RSTART + RLENGTH - 1)
+      rest = substr($0, RSTART + RLENGTH)
+      if (rest ~ /[^ ]/) rest = "    note"
+      $0 = head rest
+    } else if ($0 ~ /[^ ]/) {
+      $0 = "   note"
+    }
+  }
+  body && sec ~ /snapshot\.get/ {
+    if ($0 ~ /Snapshot (Name|Desciption|Description) *:/) sub(/: .*/, ": masked")
+    else if ($0 !~ /^(Get Snapshot:|\|-ROOT|-+Snapshot|[ \t]*$)/) $0 = "   masked"
+  }
+  body && sec ~ /\.vmsd/ && /(displayName|description) *=/ { sub(/= .*/, "= \"masked\"") }
+  body && sec ~ /^===== find / && /\// {
+    ext = $0; if (!sub(/.*\./, ".", ext) || ext ~ /\//) ext = ""
+    $0 = "file" ext
+  }
   {
     line = $0
     for (i = 1; i <= n; i++) line = lit(line, from[i], to[i])
