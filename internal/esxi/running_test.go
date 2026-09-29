@@ -5,8 +5,9 @@ import (
 	"testing"
 )
 
-// Shape of esxcli vm process list as documented; not yet captured from a
-// real host. Only the Config File lines are read.
+// Shape of esxcli vm process list as a real ESXi 6.5 host prints it, with the
+// values replaced: the configuration file by UUID path. Only the Config File
+// lines are read; the second entry shows the datastore-name form.
 const processList = `web
    World ID: 2101
    Process ID: 0
