@@ -7,7 +7,8 @@
 # replaced before anything is printed. Read the result before you send it.
 #
 # Run it from a machine with this repository, without copying it to the host:
-#   ssh root@ESXI_HOST sh -s -- VMID < scripts/capture-host.sh > esxi-shape.txt
+#   ssh -p 22 root@ESXI_HOST sh -s -- VMID < scripts/capture-host.sh > esxi-shape.txt
+# (-p is the host's SSH port.)
 # VMID is optional: a VM whose details are captured. Pick one that is running
 # and has VMware Tools; without it, the first VM in the inventory is used.
 set -u

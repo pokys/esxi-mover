@@ -11,9 +11,15 @@ of VMs and datastores, UUIDs, IP and MAC addresses before printing. Run it from 
 machine with this repository; nothing is copied to the host:
 
 ```sh
-ssh root@ESXI_HOST sh -s -- VMID < scripts/capture-host.sh > esxi-shape.txt
+ssh -p 22 root@ESXI_HOST sh -s -- VMID < scripts/capture-host.sh > esxi-shape.txt
 ```
 
-`VMID` (from `vim-cmd vmsvc/getallvms`) is a VM whose details are captured;
-pick a running one with VMware Tools. Read `esxi-shape.txt` before sharing it:
+In PowerShell, which has no `<` redirection:
+
+```powershell
+Get-Content scripts/capture-host.sh | ssh -p 22 root@ESXI_HOST sh -s -- VMID > esxi-shape.txt
+```
+
+`-p` is the host's SSH port. `VMID` (from `vim-cmd vmsvc/getallvms`) is a VM
+whose details are captured; pick a running one with VMware Tools. Read `esxi-shape.txt` before sharing it:
 snapshot names and annotations are printed as they are.
