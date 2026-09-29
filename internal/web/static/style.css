@@ -77,6 +77,11 @@ footer{font-size:11px;color:var(--faint);text-align:center;margin:22px 0 4px}
 #job[data-state=ok] progress::-webkit-progress-value{background:var(--ok)}#job[data-state=ok] progress::-moz-progress-bar{background:var(--ok)}
 #job[data-state=fail] progress::-webkit-progress-value{background:var(--block)}#job[data-state=fail] progress::-moz-progress-bar{background:var(--block)}
 #job:not([data-state=running]) .metric{background:var(--surface)}
+/* The measured downtime: the one number people look for after a switch. */
+.downtime{display:flex;align-items:center;gap:16px;background:var(--surface);border-radius:12px;padding:14px 18px;margin:14px 0 10px}
+.downtime strong{font-size:34px;font-weight:700;letter-spacing:-.03em;line-height:1;color:var(--ok);font-variant-numeric:tabular-nums}
+.downtime span{font-size:14px;font-weight:600;color:var(--fg)}
+.downtime small{display:block;font-size:12px;font-weight:400;color:var(--muted);margin-top:2px}
 #error{position:sticky;top:52px;z-index:9;font-weight:500;border-width:2px}
 /* preflight */
 .route{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:14px;background:var(--fill);border-radius:12px;padding:14px 16px;margin:4px 0 6px}

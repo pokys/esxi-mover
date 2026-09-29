@@ -19,6 +19,7 @@ VM is registered.
   datastore or in a subfolder are copied into the target folder too.
 - Checks everything before touching anything, and stops rather than guesses.
 - **Stop** at any time before the point of no return.
+- After a switch that starts the target, shows the measured downtime.
 - Shows every SSH command it runs, with exit code and duration.
 
 ## Quick start

@@ -71,6 +71,23 @@ func TestLiveCopyEndsLikeAColdCopy(t *testing.T) {
 	}
 }
 
+// The downtime is measured only when a running source is shut down and the
+// target is started: from the shutdown request to the target's power-on.
+func TestDowntimeIsMeasuredFromShutdownToTargetStart(t *testing.T) {
+	h := liveFake(1)
+	if s := liveRun(t, h, modeMove); s.DownSince.IsZero() || s.DowntimeMS <= 0 {
+		t.Fatalf("a live switch with start did not measure its downtime: %v %d", s.DownSince, s.DowntimeMS)
+	}
+	h = liveFake(1)
+	if s := liveRun(t, h, modeCopy); s.DowntimeMS != 0 {
+		t.Fatalf("a copy starts nothing, so it has no downtime to report: %d", s.DowntimeMS)
+	}
+	h = newFake(1)
+	if j, _ := run(t, h, modeMove, true); j.Snapshot().DowntimeMS != 0 || !j.Snapshot().DownSince.IsZero() {
+		t.Fatalf("a source that was already off has no downtime: %+v", j.Snapshot())
+	}
+}
+
 // A live MOVE is down only between the shutdown and the target's power-on,
 // and in between it copies just the deltas and the snapshot metadata.
 func TestLiveMoveCopiesOnlyTheChanges(t *testing.T) {

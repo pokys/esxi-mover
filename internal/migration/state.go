@@ -17,6 +17,11 @@ type State struct {
 	Live, CanStop                                                    bool
 	SourceRegistration, TargetRegistration, SourcePower, TargetPower string
 	SourceVMX, TargetVMX                                             string
+	// DownSince is when the running source was asked to shut down, and
+	// DowntimeMS how long it was until ESXi reported the target powered on.
+	// Zero when the source was already off or the target is not started.
+	DownSince  time.Time
+	DowntimeMS int64
 }
 type Job struct {
 	mu      sync.Mutex

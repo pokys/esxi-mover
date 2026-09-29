@@ -241,6 +241,13 @@ func (e *Engine) shutdown(ctx context.Context, j *Job, r Report, revalidate func
 		return fmt.Errorf("unsupported source power state")
 	}
 	j.phase(phaseShutdown, "Requesting a graceful guest shutdown")
+	// The service is down from here on, whether the guest takes seconds or
+	// waits for an operator.
+	j.update(func(s *State) {
+		if s.DownSince.IsZero() {
+			s.DownSince = time.Now()
+		}
+	})
 	shutdownErr := e.Host.Shutdown(ctx, r.VM.ID)
 	deadline := time.Now().Add(e.Options.ShutdownTimeout)
 	if shutdownErr != nil {
@@ -507,7 +514,13 @@ func (e *Engine) powerOn(ctx context.Context, j *Job) error {
 		// A VM blocked on a question already reports Powered on while the guest
 		// has not started, so an open question outranks the power state.
 		if !pending && p == esxi.On {
-			j.update(func(s *State) { s.CanRollback = false })
+			j.update(func(s *State) {
+				s.CanRollback = false
+				// Zero means "not measured", so a measurement is at least 1 ms.
+				if !s.DownSince.IsZero() {
+					s.DowntimeMS = max(1, time.Since(s.DownSince).Milliseconds())
+				}
+			})
 			return nil
 		}
 		if pending {

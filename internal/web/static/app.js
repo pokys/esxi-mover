@@ -35,6 +35,7 @@ async function action(fn, doing) {
  }
 }
 async function refreshAudit(){ if(!$('auditBox').open) return; try{ const events=await api('log'); $('technical').textContent=(events||[]).map(e=>`${e.Time}  ${e.Category}  exit=${e.ExitCode}  ${e.DurationMS} ms${e.Runs>1?'  ×'+e.Runs:''}${e.Error?'  ERROR: '+e.Error:''}\n    ${e.Command||''}`).join('\n'); $('technical').scrollTop=$('technical').scrollHeight; }catch{} }
+function duration(ms){const s=Math.max(1,Math.round(ms/1000));return s<90?s+' s':Math.floor(s/60)+' min '+(s%60)+' s';}
 function size(n) { return (n / 1073741824).toLocaleString(undefined,{maximumFractionDigits:2}) + ' GiB'; }
 function text(tag, value, className) { const el=document.createElement(tag); el.textContent=value; if(className) el.className=className; return el; }
 function metrics(id, pairs) { const root=$(id); root.replaceChildren(); pairs.forEach(([label,value])=>{const el=text('div','', 'metric');el.append(text('span',label),text('strong',value));root.append(el);}); }
@@ -190,6 +191,10 @@ function renderJob(j) {
  show('stop', j.CanStop);
  live = j.Live;
  show('rollback', j.Complete && j.CanRollback);
+ // Measured from the shutdown request until ESXi reported the target powered
+ // on; the guest's own boot comes on top, so the caption says where it ends.
+ show('downtime',j.DowntimeMS>0);
+ $('downtimeValue').textContent=j.DowntimeMS>0?duration(j.DowntimeMS):'';
  metrics('result', [['Source registration',j.SourceRegistration], ['Source power',j.SourcePower], ['Target registration',j.TargetRegistration], ['Target power',j.TargetPower], ['Target verified',j.TargetVerified?'Yes':'Not yet'], ['Source files','Preserved']]);
  $('jobPaths').textContent = 'Source: ' + j.SourceVMX + '\nTarget: ' + j.TargetVMX;
  $('cloneLog').textContent = j.TechnicalLog || '';
